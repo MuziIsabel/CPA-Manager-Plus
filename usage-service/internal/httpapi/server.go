@@ -17,6 +17,7 @@ import (
 
 	"github.com/seakee/cpa-manager/usage-service/internal/collector"
 	"github.com/seakee/cpa-manager/usage-service/internal/config"
+	"github.com/seakee/cpa-manager/usage-service/internal/inspection"
 	"github.com/seakee/cpa-manager/usage-service/internal/store"
 	"github.com/seakee/cpa-manager/usage-service/internal/usage"
 )
@@ -28,6 +29,8 @@ type Server struct {
 	cfg       config.Config
 	store     *store.Store
 	collector *collector.Manager
+	inspector *inspection.Runner
+	scheduler *inspection.Scheduler
 	startedAt int64
 }
 
@@ -63,11 +66,26 @@ type modelPricesSyncRequest struct {
 }
 
 func New(cfg config.Config, store *store.Store, collector *collector.Manager) *Server {
-	return &Server{
+	server := &Server{
 		cfg:       cfg,
 		store:     store,
 		collector: collector,
+		inspector: inspection.NewRunner(),
 		startedAt: time.Now().UnixMilli(),
+	}
+	server.scheduler = inspection.NewScheduler(store, server.inspector, server.resolveSetup, inspection.SchedulerOptions{})
+	return server
+}
+
+func (s *Server) Start(ctx context.Context) {
+	if s.scheduler != nil {
+		s.scheduler.Start(ctx)
+	}
+}
+
+func (s *Server) Stop() {
+	if s.scheduler != nil {
+		s.scheduler.Stop()
 	}
 }
 
@@ -90,6 +108,10 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(r.URL.Path, "/v0/management/model-prices") {
 		s.withCORS(s.handleModelPrices)(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/v0/management/codex-inspection") {
+		s.withCORS(s.handleCodexInspection)(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/v0/management/usage") {
@@ -671,7 +693,7 @@ func (s *Server) writeCORS(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Vary", "Origin")
 	}
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 }
 

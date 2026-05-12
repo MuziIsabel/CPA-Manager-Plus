@@ -48,9 +48,13 @@ func main() {
 		log.Printf("load setup: %v", err)
 	}
 
+	apiServer := httpapi.New(cfg, db, manager)
+	apiServer.Start(ctx)
+	defer apiServer.Stop()
+
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.New(cfg, db, manager).Handler(),
+		Handler:           apiServer.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
