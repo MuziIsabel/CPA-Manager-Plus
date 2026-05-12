@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -10,10 +10,14 @@ import {
   IconExternalLink,
   IconEye,
   IconFileText,
+  IconFilter,
   IconRefreshCw,
+  IconSearch,
   IconSettings,
+  IconShield,
   IconTimer,
   IconTrash2,
+  IconMoreVertical,
 } from '@/components/ui/icons';
 import {
   isUsageServiceId,
@@ -80,6 +84,19 @@ type TaskDraft = {
 };
 
 type ModalMode = 'create' | 'edit';
+type DetailTab = 'overview' | 'schedule' | 'scope' | 'policy' | 'notification' | 'logs';
+type TaskStatusFilter = 'all' | 'enabled' | 'disabled' | 'running' | 'warning' | 'failed';
+type ScheduleFilter = 'all' | CodexInspectionScheduleConfig['type'];
+type ScopeFilter = 'all' | CodexInspectionTargetScope['type'];
+
+const DETAIL_TABS: Array<{ id: DetailTab; label: string }> = [
+  { id: 'overview', label: '概览' },
+  { id: 'schedule', label: '执行计划' },
+  { id: 'scope', label: '巡检范围' },
+  { id: 'policy', label: '自动策略' },
+  { id: 'notification', label: '通知策略' },
+  { id: 'logs', label: '日志记录' },
+];
 
 const DEFAULT_DRAFT: TaskDraft = {
   name: '',
@@ -186,6 +203,54 @@ const scheduleLabel = (schedule: CodexInspectionScheduleConfig) => {
   }
   return '手动执行';
 };
+
+const scheduleTypeLabel = (schedule: CodexInspectionScheduleConfig) => {
+  if (schedule.type === 'interval') return '固定频率';
+  if (schedule.type === 'daily_times') return '指定时间';
+  return '手动';
+};
+
+const scopeLabel = (scope: CodexInspectionTargetScope) => {
+  if (scope.type === 'all_codex') return '全部 Codex 账号';
+  if (scope.type === 'files') return `指定文件 ${scope.fileNames.length}`;
+  if (scope.type === 'auth_indices') return `指定账号 ${scope.authIndices.length}`;
+  return '标签/关键字筛选';
+};
+
+const actionLabel = (action: CodexInspectionAutoAction) => {
+  switch (action) {
+    case 'disable':
+      return '禁用';
+    case 'enable':
+      return '启用';
+    case 'delete':
+      return '删除';
+    case 'none':
+    default:
+      return '不处理';
+  }
+};
+
+const notificationTriggerLabel = (trigger: CodexInspectionNotificationTrigger) => {
+  switch (trigger) {
+    case 'always':
+      return '每次巡检';
+    case 'abnormal':
+      return '仅异常';
+    case 'auto_action':
+      return '仅有自动操作';
+    case 'manual_required':
+      return '仅需人工处理';
+    default:
+      return trigger;
+  }
+};
+
+const targetSearchText = (task: CodexInspectionTask) =>
+  [task.id, task.name, task.description, scheduleLabel(task.schedule), scopeLabel(task.targetScope)]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
 
 const parseHeaders = (value: string): Record<string, string> => {
   const headers: Record<string, string> = {};
@@ -360,6 +425,7 @@ const buildTaskPayload = (draft: TaskDraft): CodexInspectionTaskPayload => {
 };
 
 export function CodexInspectionTasksPage() {
+  const navigate = useNavigate();
   const apiBase = useAuthStore((state) => state.apiBase);
   const managementKey = useAuthStore((state) => state.managementKey);
   const usageServiceEnabled = useUsageServiceStore((state) => state.enabled);
@@ -381,6 +447,13 @@ export function CodexInspectionTasksPage() {
   const [wizardStep, setWizardStep] = useState(0);
   const [draft, setDraft] = useState<TaskDraft>(DEFAULT_DRAFT);
   const [runDetailOpen, setRunDetailOpen] = useState(false);
+  const [detailTab, setDetailTab] = useState<DetailTab>('overview');
+  const [keywordFilter, setKeywordFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState<TaskStatusFilter>('all');
+  const [scheduleFilter, setScheduleFilter] = useState<ScheduleFilter>('all');
+  const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('all');
+  const [menuTaskId, setMenuTaskId] = useState('');
+  const [notificationModalOpen, setNotificationModalOpen] = useState(false);
 
   const resolveServiceBase = useCallback(async () => {
     if (usageServiceEnabled && usageServiceBase) {
@@ -445,14 +518,39 @@ export function CodexInspectionTasksPage() {
     [runs, selectedTask]
   );
 
+  const filteredTasks = useMemo(() => {
+    const normalizedKeyword = keywordFilter.trim().toLowerCase();
+    return tasks.filter((task) => {
+      const currentStatus = task.lastRunStatus ?? task.status;
+      if (normalizedKeyword && !targetSearchText(task).includes(normalizedKeyword)) return false;
+      if (statusFilter === 'enabled' && !task.enabled) return false;
+      if (statusFilter === 'disabled' && task.enabled) return false;
+      if (statusFilter === 'running' && currentStatus !== 'running' && !runningTaskIds.has(task.id)) return false;
+      if (statusFilter === 'failed' && currentStatus !== 'failed' && currentStatus !== 'interrupted') return false;
+      if (statusFilter === 'warning' && currentStatus !== 'partial' && currentStatus !== 'missed') return false;
+      if (scheduleFilter !== 'all' && task.schedule.type !== scheduleFilter) return false;
+      if (scopeFilter !== 'all' && task.targetScope.type !== scopeFilter) return false;
+      return true;
+    });
+  }, [keywordFilter, runningTaskIds, scheduleFilter, scopeFilter, statusFilter, tasks]);
+
   const stats = useMemo(
     () => ({
       total: tasks.length,
       enabled: tasks.filter((task) => task.enabled).length,
       running: tasks.filter((task) => task.status === 'running').length + runningTaskIds.size,
-      dryRun: tasks.filter((task) => task.dryRun).length,
+      needAttention: runs.reduce(
+        (total, run) =>
+          total +
+          summaryNumber(run, 'zeroQuota') +
+          summaryNumber(run, 'fullQuota') +
+          summaryNumber(run, 'invalid') +
+          summaryNumber(run, 'probeFailed'),
+        0
+      ),
+      notifications: tasks.filter((task) => task.notification.enabled).length,
     }),
-    [runningTaskIds.size, tasks]
+    [runningTaskIds.size, runs, tasks]
   );
 
   const openCreateModal = () => {
@@ -542,15 +640,8 @@ export function CodexInspectionTasksPage() {
     });
   };
 
-  const openRunDetail = async (run: CodexInspectionRun) => {
-    if (!serviceBase) return;
-    try {
-      const detail = await usageServiceApi.getCodexInspectionRun(serviceBase, run.id, managementKey);
-      setSelectedRunDetail(detail);
-      setRunDetailOpen(true);
-    } catch (err) {
-      showNotification(err instanceof Error ? err.message : String(err), 'error');
-    }
+  const openRunDetail = (run: CodexInspectionRun) => {
+    navigate(`/monitoring/codex-inspection-tasks/runs/${encodeURIComponent(run.id)}`);
   };
 
   const updateDraft = <K extends keyof TaskDraft>(key: K, value: TaskDraft[K]) => {
@@ -590,6 +681,10 @@ export function CodexInspectionTasksPage() {
             <IconRefreshCw size={16} />
             刷新
           </Button>
+          <Button variant="secondary" onClick={() => setNotificationModalOpen(true)}>
+            <IconSettings size={16} />
+            通知配置
+          </Button>
           <Button onClick={openCreateModal}>
             <IconTimer size={16} />
             新建任务
@@ -611,6 +706,8 @@ export function CodexInspectionTasksPage() {
         <MetricCard label="任务总数" value={String(stats.total)} meta="全部 Codex 巡检任务" />
         <MetricCard label="已启用" value={String(stats.enabled)} meta="会被服务端调度器扫描" tone="good" />
         <MetricCard label="运行中" value={String(stats.running)} meta="包含手动触发中的任务" tone="info" />
+        <MetricCard label="待处理账号" value={String(stats.needAttention)} meta="最近日志中的异常和建议" tone="warn" />
+        <MetricCard label="通知任务" value={String(stats.notifications)} meta="已启用通知策略" tone="info" />
         <MetricCard
           label="调度器"
           value={schedulerStatus?.running ? '运行中' : '未启动'}
@@ -624,34 +721,136 @@ export function CodexInspectionTasksPage() {
           <div className={styles.panelHeader}>
             <div>
               <h2>任务列表</h2>
-              <p>按更新时间排序，选择任务查看最近执行和策略。</p>
+              <p>按状态、频率和范围筛选，选择任务查看右侧详情。</p>
             </div>
+            <span className={styles.panelMeta}>{filteredTasks.length} / {tasks.length}</span>
+          </div>
+          <div className={styles.taskFilters}>
+            <Input
+              label="搜索"
+              value={keywordFilter}
+              onChange={(event) => setKeywordFilter(event.target.value)}
+              placeholder="任务名 / ID / 描述"
+              rightElement={<IconSearch size={15} />}
+            />
+            <label className={styles.field}>
+              <span>状态</span>
+              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as TaskStatusFilter)}>
+                <option value="all">全部</option>
+                <option value="enabled">启用</option>
+                <option value="disabled">停用</option>
+                <option value="running">运行中</option>
+                <option value="warning">需处理</option>
+                <option value="failed">失败</option>
+              </select>
+            </label>
+            <label className={styles.field}>
+              <span>频率</span>
+              <select value={scheduleFilter} onChange={(event) => setScheduleFilter(event.target.value as ScheduleFilter)}>
+                <option value="all">全部</option>
+                <option value="manual">手动</option>
+                <option value="interval">固定频率</option>
+                <option value="daily_times">指定时间</option>
+              </select>
+            </label>
+            <label className={styles.field}>
+              <span>范围</span>
+              <select value={scopeFilter} onChange={(event) => setScopeFilter(event.target.value as ScopeFilter)}>
+                <option value="all">全部</option>
+                <option value="all_codex">全部账号</option>
+                <option value="files">认证文件</option>
+                <option value="auth_indices">指定账号</option>
+                <option value="metadata_filter">标签/关键字</option>
+              </select>
+            </label>
           </div>
           <div className={styles.taskList}>
-            {tasks.map((task) => (
-              <button
+            <div className={styles.taskTableHeader}>
+              <span>任务</span>
+              <span>状态</span>
+              <span>频率</span>
+              <span>范围</span>
+              <span>最近执行</span>
+              <span>下次执行</span>
+              <span />
+            </div>
+            {filteredTasks.map((task) => (
+              <div
                 key={task.id}
-                type="button"
+                role="button"
+                tabIndex={0}
                 className={`${styles.taskRow} ${selectedTask?.id === task.id ? styles.taskRowActive : ''}`}
-                onClick={() => setSelectedTaskId(task.id)}
+                onClick={() => {
+                  setSelectedTaskId(task.id);
+                  setDetailTab('overview');
+                  setMenuTaskId('');
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setSelectedTaskId(task.id);
+                    setDetailTab('overview');
+                    setMenuTaskId('');
+                  }
+                }}
               >
-                <span className={`${styles.statusPill} ${task.enabled ? styles.pillGood : styles.pillMuted}`}>
-                  {task.enabled ? '启用' : '停用'}
-                </span>
                 <span className={styles.taskRowMain}>
                   <strong>{task.name}</strong>
-                  <small>{scheduleLabel(task.schedule)}</small>
+                  <small>{task.description || task.id}</small>
                 </span>
-                <span className={`${styles.runStatus} ${statusTone(task.lastRunStatus ?? task.status)}`}>
-                  {statusLabel(task.lastRunStatus ?? task.status)}
+                <span className={styles.taskStatusStack}>
+                  <span className={`${styles.statusPill} ${task.enabled ? styles.pillGood : styles.pillMuted}`}>
+                    {task.enabled ? '启用' : '停用'}
+                  </span>
+                  <span className={`${styles.runStatus} ${statusTone(task.lastRunStatus ?? task.status)}`}>
+                    {statusLabel(task.lastRunStatus ?? task.status)}
+                  </span>
                 </span>
-              </button>
+                <span>{scheduleTypeLabel(task.schedule)}</span>
+                <span>{scopeLabel(task.targetScope)}</span>
+                <span>{formatDateTime(task.lastRunAtMs)}</span>
+                <span>{formatDateTime(task.nextRunAtMs)}</span>
+                <span className={styles.taskRowActions}>
+                  <button
+                    type="button"
+                    title="立即运行"
+                    disabled={runningTaskIds.has(task.id)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void runTask(task);
+                    }}
+                  >
+                    <IconTimer size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    title="更多"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setMenuTaskId((current) => (current === task.id ? '' : task.id));
+                    }}
+                  >
+                    <IconMoreVertical size={15} />
+                  </button>
+                  {menuTaskId === task.id ? (
+                    <span className={styles.moreMenu}>
+                      <button type="button" onClick={(event) => { event.stopPropagation(); openEditModal(task); }}>编辑任务</button>
+                      <button type="button" onClick={(event) => { event.stopPropagation(); void runTask(task); }}>立即运行</button>
+                      <button type="button" onClick={(event) => { event.stopPropagation(); void setTaskEnabled(task, !task.enabled); }}>
+                        {task.enabled ? '停用任务' : '启用任务'}
+                      </button>
+                      <button type="button" onClick={(event) => { event.stopPropagation(); setDetailTab('logs'); setSelectedTaskId(task.id); }}>查看日志</button>
+                      <button type="button" className={styles.dangerMenuItem} onClick={(event) => { event.stopPropagation(); deleteTask(task); }}>删除任务</button>
+                    </span>
+                  ) : null}
+                </span>
+              </div>
             ))}
-            {tasks.length === 0 ? (
+            {filteredTasks.length === 0 ? (
               <div className={styles.emptyState}>
-                <IconTimer size={24} />
-                <p>还没有巡检任务。</p>
-                <Button size="sm" onClick={openCreateModal}>新建任务</Button>
+                <IconFilter size={24} />
+                <p>{tasks.length === 0 ? '还没有巡检任务。' : '没有匹配的巡检任务。'}</p>
+                {tasks.length === 0 ? <Button size="sm" onClick={openCreateModal}>新建任务</Button> : null}
               </div>
             ) : null}
           </div>
@@ -691,21 +890,138 @@ export function CodexInspectionTasksPage() {
                 </div>
               ) : null}
 
-              <div className={styles.detailGrid}>
-                <InfoItem label="下次执行" value={formatDateTime(selectedTask.nextRunAtMs)} />
-                <InfoItem label="最近执行" value={formatDateTime(selectedTask.lastRunAtMs)} />
-                <InfoItem label="并发/超时" value={`${selectedTask.execution.concurrency} / ${selectedTask.execution.timeoutMs}ms`} />
-                <InfoItem label="Dry-run" value={selectedTask.dryRun ? '开启' : '关闭'} />
-                <InfoItem label="范围" value={selectedTask.targetScope.type} />
-                <InfoItem label="日志保留" value={retentionLabel(selectedTask.logRetention)} />
+              <div className={styles.detailTabs}>
+                {DETAIL_TABS.map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={detailTab === tab.id ? styles.detailTabActive : ''}
+                    onClick={() => setDetailTab(tab.id)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
               </div>
 
-              <div className={styles.strategyGrid}>
-                <PolicyBadge label="零额度" value={selectedTask.autoAction.zeroQuotaAction} />
-                <PolicyBadge label="满额度" value={selectedTask.autoAction.fullQuotaAction} />
-                <PolicyBadge label="失效账号" value={selectedTask.autoAction.invalidAction} danger={selectedTask.autoAction.invalidAction === 'delete'} />
-                <PolicyBadge label="自动删除" value={selectedTask.autoAction.allowDelete ? '允许' : '关闭'} danger={selectedTask.autoAction.allowDelete} />
-              </div>
+              {detailTab === 'overview' ? (
+                <>
+                  <div className={styles.detailGrid}>
+                    <InfoItem label="下次执行" value={formatDateTime(selectedTask.nextRunAtMs)} />
+                    <InfoItem label="最近执行" value={formatDateTime(selectedTask.lastRunAtMs)} />
+                    <InfoItem label="并发/超时" value={`${selectedTask.execution.concurrency} / ${selectedTask.execution.timeoutMs}ms`} />
+                    <InfoItem label="Dry-run" value={selectedTask.dryRun ? '开启' : '关闭'} />
+                    <InfoItem label="范围" value={scopeLabel(selectedTask.targetScope)} />
+                    <InfoItem label="日志保留" value={retentionLabel(selectedTask.logRetention)} />
+                  </div>
+                  <div className={styles.riskCard}>
+                    <IconShield size={18} />
+                    <div>
+                      <strong>{selectedTask.dryRun ? 'dry-run 已开启' : '真实操作模式'}</strong>
+                      <p>
+                        未知状态、网络异常和巡检失败账号不会自动删除。自动删除需要明确允许并通过删除预览保护。
+                      </p>
+                    </div>
+                  </div>
+                </>
+              ) : null}
+
+              {detailTab === 'schedule' ? (
+                <div className={styles.detailGrid}>
+                  <InfoItem label="执行方式" value={scheduleTypeLabel(selectedTask.schedule)} />
+                  <InfoItem label="计划" value={scheduleLabel(selectedTask.schedule)} />
+                  <InfoItem
+                    label="时区"
+                    value={
+                      selectedTask.schedule.type === 'interval' || selectedTask.schedule.type === 'daily_times'
+                        ? selectedTask.schedule.timezone || '服务端默认'
+                        : '服务端默认'
+                    }
+                  />
+                  <InfoItem label="失败重试" value={`${selectedTask.execution.retries} 次`} />
+                  <InfoItem label="并发数" value={String(selectedTask.execution.concurrency)} />
+                  <InfoItem label="超时时间" value={`${selectedTask.execution.timeoutMs} ms`} />
+                </div>
+              ) : null}
+
+              {detailTab === 'scope' ? (
+                <div className={styles.scopePreview}>
+                  <InfoItem label="范围类型" value={scopeLabel(selectedTask.targetScope)} />
+                  {selectedTask.targetScope.type === 'files' ? (
+                    <pre>{selectedTask.targetScope.fileNames.join('\n') || '--'}</pre>
+                  ) : null}
+                  {selectedTask.targetScope.type === 'auth_indices' ? (
+                    <pre>{selectedTask.targetScope.authIndices.join('\n') || '--'}</pre>
+                  ) : null}
+                  {selectedTask.targetScope.type === 'metadata_filter' ? (
+                    <div className={styles.detailGrid}>
+                      <InfoItem label="关键词" value={selectedTask.targetScope.query || '--'} />
+                      <InfoItem label="备注包含" value={selectedTask.targetScope.noteIncludes || '--'} />
+                    </div>
+                  ) : null}
+                  {selectedTask.targetScope.type === 'all_codex' ? (
+                    <p className={styles.mutedText}>将巡检 auth pool 中所有 Codex 账号。</p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {detailTab === 'policy' ? (
+                <>
+                  <div className={styles.strategyGrid}>
+                    <PolicyBadge label="零额度" value={actionLabel(selectedTask.autoAction.zeroQuotaAction)} />
+                    <PolicyBadge label="满额度" value={actionLabel(selectedTask.autoAction.fullQuotaAction)} />
+                    <PolicyBadge
+                      label="失效账号"
+                      value={actionLabel(selectedTask.autoAction.invalidAction)}
+                      danger={selectedTask.autoAction.invalidAction === 'delete'}
+                    />
+                    <PolicyBadge
+                      label="自动删除"
+                      value={selectedTask.autoAction.allowDelete ? '允许' : '关闭'}
+                      danger={selectedTask.autoAction.allowDelete}
+                    />
+                    <PolicyBadge label="删除预览" value={selectedTask.autoAction.requireDeletePreview ? '必须' : '关闭'} />
+                    <PolicyBadge label="Dry-run" value={selectedTask.autoAction.dryRun ? '开启' : '关闭'} />
+                  </div>
+                  {(selectedTask.autoAction.invalidAction === 'delete' || selectedTask.autoAction.allowDelete) ? (
+                    <div className={styles.dangerNotice}>
+                      <IconTrash2 size={18} />
+                      <span>自动删除属于高风险操作，默认不会对 unknown、网络异常或巡检失败结果执行。</span>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+
+              {detailTab === 'notification' ? (
+                <div className={styles.notificationPreview}>
+                  <div className={styles.detailGrid}>
+                    <InfoItem label="通知状态" value={selectedTask.notification.enabled ? '启用' : '停用'} />
+                    <InfoItem label="触发条件" value={notificationTriggerLabel(selectedTask.notification.trigger)} />
+                    <InfoItem label="渠道" value={selectedTask.notification.channels.join('、') || '--'} />
+                    <InfoItem label="仅有操作/异常通知" value={selectedTask.notification.trigger === 'auto_action' || selectedTask.notification.trigger === 'abnormal' ? '是' : '否'} />
+                  </div>
+                  <div className={styles.channelPreviewGrid}>
+                    {(['telegram', 'feishu', 'wecom', 'webhook'] as CodexInspectionNotificationChannel[]).map((channel) => (
+                      <div key={channel} className={styles.channelPreviewCard}>
+                        <strong>{channel}</strong>
+                        <span>{selectedTask.notification.channels.includes(channel) ? '已选择' : '未选择'}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {detailTab === 'logs' ? (
+                <div className={styles.miniRunTable}>
+                  {selectedTaskRuns.slice(0, 6).map((run) => (
+                    <button key={run.id} type="button" onClick={() => openRunDetail(run)}>
+                      <span className={`${styles.runStatus} ${statusTone(run.status)}`}>{statusLabel(run.status)}</span>
+                      <strong>{formatDateTime(run.startedAtMs)}</strong>
+                      <small>账号 {summaryNumber(run, 'total')} / 耗时 {formatDuration(run.durationMs)}</small>
+                    </button>
+                  ))}
+                  {selectedTaskRuns.length === 0 ? <div className={styles.emptyRow}>暂无执行日志</div> : null}
+                </div>
+              ) : null}
 
               <div className={styles.detailFooter}>
                 <ToggleSwitch
@@ -783,6 +1099,14 @@ export function CodexInspectionTasksPage() {
         onSave={saveTask}
       />
 
+      <NotificationChannelModal
+        open={notificationModalOpen}
+        serviceBase={serviceBase}
+        managementKey={managementKey}
+        onClose={() => setNotificationModalOpen(false)}
+        onNotify={showNotification}
+      />
+
       <RunDetailModal
         open={runDetailOpen}
         detail={selectedRunDetail}
@@ -857,7 +1181,7 @@ function TaskModal({
       {wizardStep > 0 ? (
         <Button variant="secondary" onClick={() => onStepChange(wizardStep - 1)} disabled={saving}>上一步</Button>
       ) : null}
-      {wizardStep < 2 ? (
+      {wizardStep < 4 ? (
         <Button onClick={() => onStepChange(wizardStep + 1)} disabled={saving}>下一步</Button>
       ) : (
         <Button onClick={onSave} loading={saving}>{mode === 'edit' ? '保存任务' : '创建任务'}</Button>
@@ -866,9 +1190,9 @@ function TaskModal({
   );
 
   return (
-    <Modal open={open} title={mode === 'edit' ? '编辑巡检任务' : '新建巡检任务'} onClose={onClose} footer={footer} width={860}>
+    <Modal open={open} title={mode === 'edit' ? '编辑巡检任务' : '新建巡检任务'} onClose={onClose} footer={footer} width={980}>
       <div className={styles.wizardSteps}>
-        {['基础配置', '范围与调度', '处理与通知'].map((label, index) => (
+        {['基本信息', '检测配置', '巡检范围', '执行策略', '通知与日志'].map((label, index) => (
           <button
             key={label}
             type="button"
@@ -887,14 +1211,27 @@ function TaskModal({
           <Input label="描述" value={draft.description} onChange={(event) => onDraftChange('description', event.target.value)} />
           <ToggleSwitch checked={draft.enabled} onChange={(value) => onDraftChange('enabled', value)} label="启用任务" />
           <ToggleSwitch checked={draft.dryRun} onChange={(value) => onDraftChange('dryRun', value)} label="Dry-run 模式" />
-          <Input label="并发数" type="number" min={1} value={draft.concurrency} onChange={(event) => onDraftChange('concurrency', event.target.value)} />
-          <Input label="超时时间 ms" type="number" min={1000} value={draft.timeoutMs} onChange={(event) => onDraftChange('timeoutMs', event.target.value)} />
-          <Input label="失败重试次数" type="number" min={0} value={draft.retries} onChange={(event) => onDraftChange('retries', event.target.value)} />
-          <ToggleSwitch checked={draft.saveLogs} onChange={(value) => onDraftChange('saveLogs', value)} label="保存任务日志" />
+          <div className={styles.safeNotice}>
+            <IconShield size={18} />
+            <span>默认开启 dry-run，只生成建议和审计记录，不会实际修改 Codex 账号。</span>
+          </div>
         </div>
       ) : null}
 
       {wizardStep === 1 ? (
+        <div className={styles.formGrid}>
+          <Input label="并发数" type="number" min={1} value={draft.concurrency} onChange={(event) => onDraftChange('concurrency', event.target.value)} />
+          <Input label="超时时间 ms" type="number" min={1000} value={draft.timeoutMs} onChange={(event) => onDraftChange('timeoutMs', event.target.value)} />
+          <Input label="失败重试次数" type="number" min={0} value={draft.retries} onChange={(event) => onDraftChange('retries', event.target.value)} />
+          <ToggleSwitch checked={draft.saveLogs} onChange={(value) => onDraftChange('saveLogs', value)} label="保存任务日志" />
+          <div className={styles.safeNotice}>
+            <IconFileText size={18} />
+            <span>关闭任务日志不会关闭自动处理审计，系统仍会保存最小审计信息。</span>
+          </div>
+        </div>
+      ) : null}
+
+      {wizardStep === 2 ? (
         <div className={styles.formGrid}>
           <label className={styles.field}>
             <span>巡检范围</span>
@@ -923,6 +1260,15 @@ function TaskModal({
               <Input label="备注包含" value={draft.noteIncludes} onChange={(event) => onDraftChange('noteIncludes', event.target.value)} />
             </>
           ) : null}
+          <div className={styles.safeNotice}>
+            <IconSearch size={18} />
+            <span>当前版本没有独立标签系统，标签筛选会复用 auth file 中可搜索的备注、账号和 provider 信息。</span>
+          </div>
+        </div>
+      ) : null}
+
+      {wizardStep === 3 ? (
+        <div className={styles.formGrid}>
           <label className={styles.field}>
             <span>执行方式</span>
             <select value={draft.scheduleType} onChange={(event) => onDraftChange('scheduleType', event.target.value as TaskDraft['scheduleType'])}>
@@ -962,11 +1308,6 @@ function TaskModal({
           {draft.retentionMode === 'latest' ? (
             <Input label="保留最近条数" type="number" min={1} value={draft.retentionCount} onChange={(event) => onDraftChange('retentionCount', event.target.value)} />
           ) : null}
-        </div>
-      ) : null}
-
-      {wizardStep === 2 ? (
-        <div className={styles.formGrid}>
           <label className={styles.field}>
             <span>零额度账号</span>
             <select value={draft.zeroQuotaAction} onChange={(event) => onDraftChange('zeroQuotaAction', event.target.value as TaskDraft['zeroQuotaAction'])}>
@@ -1000,6 +1341,15 @@ function TaskModal({
               <span>自动删除默认关闭。实际删除需要关闭 dry-run、开启允许自动删除，并关闭预览保护。</span>
             </div>
           ) : null}
+          <div className={styles.safeNotice}>
+            <IconShield size={18} />
+            <span>未知状态、网络异常和巡检失败账号不会执行自动处理。</span>
+          </div>
+        </div>
+      ) : null}
+
+      {wizardStep === 4 ? (
+        <div className={styles.formGrid}>
           <ToggleSwitch checked={draft.notificationEnabled} onChange={(value) => onDraftChange('notificationEnabled', value)} label="启用通知" />
           <label className={styles.field}>
             <span>通知触发条件</span>
@@ -1044,6 +1394,171 @@ function TaskModal({
           </label>
         </div>
       ) : null}
+    </Modal>
+  );
+}
+
+function NotificationChannelModal({
+  open,
+  serviceBase,
+  managementKey,
+  onClose,
+  onNotify,
+}: {
+  open: boolean;
+  serviceBase: string;
+  managementKey?: string;
+  onClose: () => void;
+  onNotify: (message: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
+}) {
+  const [channel, setChannel] = useState<CodexInspectionNotificationChannel>('telegram');
+  const [enabled, setEnabled] = useState(true);
+  const [botToken, setBotToken] = useState('');
+  const [chatId, setChatId] = useState('');
+  const [webhookUrl, setWebhookUrl] = useState('');
+  const [secret, setSecret] = useState('');
+  const [headers, setHeaders] = useState('Content-Type: application/json');
+  const [template, setTemplate] = useState(
+    'Codex 巡检任务：{{taskName}}\n状态：{{status}}\n账号总数：{{total}}\n日志 ID：{{logId}}'
+  );
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState('');
+
+  const channelConfig = useMemo(() => {
+    if (channel === 'telegram') {
+      return { botToken, chatId, template };
+    }
+    if (channel === 'feishu') {
+      return { webhookUrl, secret, template };
+    }
+    if (channel === 'wecom') {
+      return { webhookUrl, template };
+    }
+    return { url: webhookUrl, headers: parseHeaders(headers), template };
+  }, [botToken, channel, chatId, headers, secret, template, webhookUrl]);
+
+  const payload = useMemo(
+    () => ({
+      enabled,
+      channels: enabled ? [channel] : [],
+      trigger: 'always',
+      channelConfigs: {
+        [channel]: channelConfig,
+      },
+    }),
+    [channel, channelConfig, enabled]
+  );
+
+  const previewText = `Codex 巡检任务：Codex 巡检通知测试
+状态：success
+账号总数：1
+正常：1，零额度：0，满额度：0，失效：0，失败：0
+日志 ID：test`;
+
+  const testNotification = async () => {
+    if (!serviceBase) {
+      onNotify('Usage Service 未连接，无法测试通知', 'error');
+      return;
+    }
+    setTesting(true);
+    setTestResult('');
+    try {
+      const response = await usageServiceApi.testCodexInspectionNotification(
+        serviceBase,
+        { notification: payload },
+        managementKey
+      );
+      setTestResult(JSON.stringify(response, null, 2));
+      onNotify(Boolean(response.ok) ? '测试通知发送成功' : '测试通知发送失败', Boolean(response.ok) ? 'success' : 'warning');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setTestResult(message);
+      onNotify(message, 'error');
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <Modal open={open} title="通知渠道配置" onClose={onClose} width={920}>
+      <div className={styles.notificationModalGrid}>
+        <section className={styles.notificationForm}>
+          <ToggleSwitch checked={enabled} onChange={setEnabled} label="启用通知渠道" />
+          <label className={styles.field}>
+            <span>渠道</span>
+            <select value={channel} onChange={(event) => setChannel(event.target.value as CodexInspectionNotificationChannel)}>
+              <option value="telegram">Telegram Bot</option>
+              <option value="feishu">飞书机器人</option>
+              <option value="wecom">企业微信机器人</option>
+              <option value="webhook">自定义 Webhook</option>
+            </select>
+          </label>
+
+          {channel === 'telegram' ? (
+            <>
+              <Input
+                label="Bot Token"
+                value={botToken}
+                onChange={(event) => setBotToken(event.target.value)}
+                placeholder="保存后后端应脱敏返回"
+              />
+              <Input label="Chat ID" value={chatId} onChange={(event) => setChatId(event.target.value)} />
+            </>
+          ) : null}
+
+          {channel === 'feishu' || channel === 'wecom' || channel === 'webhook' ? (
+            <Input
+              label={channel === 'webhook' ? 'Webhook URL' : '机器人 Webhook'}
+              value={webhookUrl}
+              onChange={(event) => setWebhookUrl(event.target.value)}
+              placeholder="保存后不应明文回显"
+            />
+          ) : null}
+
+          {channel === 'feishu' ? (
+            <Input label="Secret" value={secret} onChange={(event) => setSecret(event.target.value)} />
+          ) : null}
+
+          {channel === 'webhook' ? (
+            <label className={styles.fieldWide}>
+              <span>Header</span>
+              <textarea value={headers} onChange={(event) => setHeaders(event.target.value)} />
+            </label>
+          ) : null}
+
+          <label className={styles.fieldWide}>
+            <span>消息模板</span>
+            <textarea value={template} onChange={(event) => setTemplate(event.target.value)} />
+          </label>
+
+          <div className={styles.safeNotice}>
+            <IconShield size={18} />
+            <span>Token、Secret、Webhook URL 保存后需要由后端脱敏显示；测试通知失败不会阻止任务配置保存。</span>
+          </div>
+
+          <div className={styles.modalFooter}>
+            <Button variant="secondary" onClick={onClose}>关闭</Button>
+            <Button onClick={() => void testNotification()} loading={testing}>测试通知</Button>
+          </div>
+        </section>
+
+        <aside className={styles.notificationPreviewPanel}>
+          <div>
+            <h3>消息预览</h3>
+            <pre>{previewText}</pre>
+          </div>
+          <div>
+            <h3>JSON Payload</h3>
+            <pre>{JSON.stringify(payload, null, 2)}</pre>
+          </div>
+          {testResult ? (
+            <div>
+              <h3>测试结果</h3>
+              <pre>{testResult}</pre>
+            </div>
+          ) : null}
+        </aside>
+      </div>
     </Modal>
   );
 }

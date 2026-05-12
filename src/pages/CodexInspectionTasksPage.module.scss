@@ -114,7 +114,7 @@
 
 .statsGrid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -189,16 +189,42 @@
   }
 }
 
+.panelMeta {
+  color: var(--task-muted);
+  font-size: 12px;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.taskFilters {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) repeat(3, 140px);
+  gap: 12px;
+  margin-bottom: 14px;
+  align-items: end;
+}
+
 .taskList {
   display: grid;
   gap: 10px;
 }
 
+.taskTableHeader,
 .taskRow {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(180px, 1.25fr) 122px 92px 120px 132px 132px 74px;
   align-items: center;
   gap: 12px;
+}
+
+.taskTableHeader {
+  padding: 0 12px 4px;
+  color: var(--task-muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.taskRow {
   width: 100%;
   min-height: 74px;
   padding: 12px;
@@ -230,6 +256,72 @@
     margin-top: 5px;
     color: var(--task-muted);
   }
+}
+
+.taskStatusStack {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.taskRowActions {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+
+  > button {
+    display: inline-grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--task-line);
+    border-radius: 8px;
+    background: var(--task-surface);
+    color: var(--task-text);
+    cursor: pointer;
+  }
+
+  > button:hover {
+    border-color: color-mix(in srgb, var(--task-accent) 36%, var(--task-line));
+    background: color-mix(in srgb, var(--task-accent) 8%, var(--task-surface));
+  }
+}
+
+.moreMenu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 10;
+  display: grid;
+  min-width: 142px;
+  padding: 6px;
+  border: 1px solid var(--task-line);
+  border-radius: 8px;
+  background: var(--task-surface);
+  box-shadow: 0 12px 26px color-mix(in srgb, #000 12%, transparent);
+
+  button {
+    min-height: 32px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--task-text);
+    text-align: left;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  button:hover {
+    background: var(--task-muted-surface);
+  }
+}
+
+.dangerMenuItem {
+  color: var(--task-red) !important;
 }
 
 .statusPill,
@@ -310,6 +402,32 @@
   background: color-mix(in srgb, var(--task-cyan) 9%, var(--task-surface));
 }
 
+.detailTabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+
+  button {
+    min-height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--task-line);
+    border-radius: 8px;
+    background: var(--task-muted-surface);
+    color: var(--task-text);
+    font-size: 12px;
+    font-weight: 760;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+}
+
+.detailTabActive {
+  border-color: color-mix(in srgb, var(--task-accent) 42%, var(--task-line)) !important;
+  background: color-mix(in srgb, var(--task-accent) 10%, var(--task-surface)) !important;
+  color: var(--task-accent) !important;
+}
+
 .spinner {
   width: 18px;
   height: 18px;
@@ -351,6 +469,98 @@
 .policyDanger {
   border-color: color-mix(in srgb, var(--task-red) 38%, var(--task-line));
   background: color-mix(in srgb, var(--task-red) 7%, var(--task-surface));
+}
+
+.riskCard,
+.safeNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--task-cyan) 32%, var(--task-line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--task-cyan) 7%, var(--task-surface));
+  font-size: 13px;
+  line-height: 1.5;
+
+  p {
+    margin: 4px 0 0;
+    color: var(--task-muted);
+  }
+}
+
+.safeNotice {
+  grid-column: 1 / -1;
+}
+
+.scopePreview,
+.notificationPreview {
+  display: grid;
+  gap: 12px;
+
+  pre {
+    margin: 0;
+    max-height: 180px;
+    overflow: auto;
+    padding: 12px;
+    border: 1px solid var(--task-line);
+    border-radius: 8px;
+    background: var(--task-muted-surface);
+    color: var(--task-text);
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+}
+
+.mutedText {
+  margin: 0;
+  color: var(--task-muted);
+  font-size: 13px;
+}
+
+.channelPreviewGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.channelPreviewCard {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid var(--task-line);
+  border-radius: 8px;
+  background: var(--task-muted-surface);
+
+  span {
+    color: var(--task-muted);
+    font-size: 12px;
+  }
+}
+
+.miniRunTable {
+  display: grid;
+  gap: 8px;
+
+  button {
+    display: grid;
+    grid-template-columns: 86px minmax(0, 1fr);
+    gap: 6px 10px;
+    min-height: 54px;
+    padding: 10px;
+    border: 1px solid var(--task-line);
+    border-radius: 8px;
+    background: var(--task-muted-surface);
+    color: var(--task-text);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  small {
+    grid-column: 2;
+    color: var(--task-muted);
+  }
 }
 
 .detailFooter {
@@ -414,7 +624,7 @@
 
 .wizardSteps {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 18px;
 
@@ -523,6 +733,40 @@
   font-weight: 700;
 }
 
+.notificationModalGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(280px, 0.75fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.notificationForm,
+.notificationPreviewPanel {
+  display: grid;
+  gap: 14px;
+}
+
+.notificationPreviewPanel {
+  h3 {
+    margin: 0 0 8px;
+    font-size: 14px;
+  }
+
+  pre {
+    margin: 0;
+    max-height: 220px;
+    overflow: auto;
+    padding: 12px;
+    border: 1px solid var(--task-line);
+    border-radius: 8px;
+    background: var(--task-muted-surface);
+    color: var(--task-text);
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+}
+
 .modalFooter {
   justify-content: flex-end;
 }
@@ -594,6 +838,22 @@
     display: none;
   }
 
+  .taskFilters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .taskTableHeader {
+    display: none;
+  }
+
+  .taskRow {
+    grid-template-columns: minmax(0, 1fr) 112px 74px;
+  }
+
+  .taskRow > span:nth-child(n + 4):not(.taskRowActions) {
+    display: none;
+  }
+
   .runRow {
     grid-template-columns: 1fr 90px;
   }
@@ -621,7 +881,10 @@
   .strategyGrid,
   .resultSummary,
   .formGrid,
-  .wizardSteps {
+  .wizardSteps,
+  .taskFilters,
+  .notificationModalGrid,
+  .channelPreviewGrid {
     grid-template-columns: 1fr;
   }
 
