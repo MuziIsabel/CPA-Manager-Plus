@@ -2984,7 +2984,7 @@ export function MonitoringCenterPage() {
             <IconExternalLink size={14} />
           </Link>
           <Link
-            to="/monitoring/codex-inspection/tasks"
+            to="/monitoring/codex-inspection-tasks"
             className={`${styles.actionButton} ${styles.quickNavLink}`}
           >
             <IconTimer size={16} />

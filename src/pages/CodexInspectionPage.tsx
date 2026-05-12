@@ -863,7 +863,7 @@ export function CodexInspectionPage() {
               <IconExternalLink size={14} />
               <span>{t('monitoring.codex_inspection_back')}</span>
             </Link>
-            <Link to="/monitoring/codex-inspection/tasks" className={styles.quickLink}>
+            <Link to="/monitoring/codex-inspection-tasks" className={styles.quickLink}>
               <IconSettings size={14} />
               <span>巡检任务</span>
             </Link>
