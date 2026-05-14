@@ -84,24 +84,13 @@ import { MonitoringPanel } from '@/features/monitoring/components/MonitoringPane
 import { useUsageData } from '@/features/monitoring/hooks/useUsageData';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useInterval } from '@/hooks/useInterval';
-import { apiCallApi, authFilesApi, getApiCallErrorMessage } from '@/services/api';
+import { useRequestMonitoringAvailability } from '@/hooks/useRequestMonitoringAvailability';
+import { authFilesApi, requestCodexUsagePayload } from '@/services/api';
 import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
-import type {
-  AuthFileItem,
-  CodexRateLimitInfo,
-  CodexUsagePayload,
-  CodexUsageWindow,
-} from '@/types';
+import type { AuthFileItem, CodexUsagePayload } from '@/types';
 import { formatFileSize, maskSensitiveText } from '@/utils/format';
 import type { StatusBarData, StatusBlockDetail } from '@/utils/recentRequests';
-import {
-  CODEX_REQUEST_HEADERS,
-  CODEX_USAGE_URL,
-  formatCodexResetLabel,
-  normalizeNumberValue,
-  normalizePlanType,
-  parseCodexUsagePayload,
-} from '@/utils/quota';
+import { buildCodexQuotaWindowInfos, normalizePlanType } from '@/utils/quota';
 import {
   formatCompactNumber,
   formatDurationMs,
@@ -110,6 +99,7 @@ import {
   type ModelPrice,
 } from '@/utils/usage';
 import { downloadBlob } from '@/utils/download';
+import { sha256Hex } from '@/utils/apiKeyHash';
 import styles from './MonitoringCenterPage.module.scss';
 
 const TIME_RANGE_OPTIONS: Array<{ value: MonitoringTimeRange; labelKey: string }> = [
@@ -177,6 +167,7 @@ type FocusSnapshot = {
   selectedProvider: string;
   selectedModel: string;
   selectedChannel: string;
+  selectedApiKeyHash: string;
   selectedStatus: StatusFilter;
 };
 
@@ -315,8 +306,6 @@ const buildRealtimeMetaText = (row: MonitoringEventRow) => {
   return maskSensitiveText(text || '-');
 };
 
-const FIVE_HOUR_SECONDS = 18000;
-const WEEK_SECONDS = 604800;
 const PREMIUM_CODEX_PLAN_TYPES = new Set(['pro', 'prolite', 'pro-lite', 'pro_lite']);
 
 const getCodexPlanLabel = (planType: string | null | undefined, t: TFunction): string | null => {
@@ -413,38 +402,19 @@ const buildAccountSummaryMetrics = (
   },
 ];
 
-const buildAccountQuotaWindows = (
-  payload: CodexUsagePayload,
-  t: TFunction
-): AccountQuotaWindow[] => {
-  const windows: AccountQuotaWindow[] = [];
-  const rateLimit = payload.rate_limit ?? payload.rateLimit ?? undefined;
-  const codeReviewLimit =
-    payload.code_review_rate_limit ?? payload.codeReviewRateLimit ?? undefined;
-  const additionalRateLimits = payload.additional_rate_limits ?? payload.additionalRateLimits ?? [];
-
-  const addWindow = (
-    id: string,
-    label: string,
-    window?: CodexUsageWindow | null,
-    limitReached?: boolean,
-    allowed?: boolean
-  ) => {
-    if (!window) return;
-
-    const resetLabel = formatCodexResetLabel(window);
-    const usedPercentRaw = normalizeNumberValue(window.used_percent ?? window.usedPercent);
-    const isLimitReached = Boolean(limitReached) || allowed === false;
-    const usedPercent = usedPercentRaw ?? (isLimitReached && resetLabel !== '-' ? 100 : null);
-    const clampedUsed = usedPercent === null ? null : Math.max(0, Math.min(100, usedPercent));
+const buildAccountQuotaWindows = (payload: CodexUsagePayload, t: TFunction): AccountQuotaWindow[] =>
+  buildCodexQuotaWindowInfos(payload).map((window) => {
+    const clampedUsed =
+      window.usedPercent === null ? null : Math.max(0, Math.min(100, window.usedPercent));
     const remainingPercent = clampedUsed === null ? null : Math.max(0, 100 - clampedUsed);
-
-    const totalSeconds = normalizeNumberValue(
-      window.limit_window_seconds ?? window.limitWindowSeconds
-    );
     let usageLabel: string | null = null;
-    if (totalSeconds !== null && totalSeconds > 0 && clampedUsed !== null) {
-      const totalHours = totalSeconds / 3600;
+
+    if (
+      window.limitWindowSeconds !== null &&
+      window.limitWindowSeconds > 0 &&
+      clampedUsed !== null
+    ) {
+      const totalHours = window.limitWindowSeconds / 3600;
       const usedHours = (totalHours * clampedUsed) / 100;
       const formatHours = (value: number) =>
         Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1);
@@ -454,145 +424,26 @@ const buildAccountQuotaWindows = (
       });
     }
 
-    windows.push({
-      id,
-      label,
+    return {
+      id: window.id,
+      label: t(window.labelKey, window.labelParams),
       remainingPercent,
-      resetLabel,
+      resetLabel: window.resetLabel,
       usageLabel,
-    });
-  };
-
-  const getWindowSeconds = (window?: CodexUsageWindow | null): number | null => {
-    if (!window) return null;
-    return normalizeNumberValue(window.limit_window_seconds ?? window.limitWindowSeconds);
-  };
-
-  const pickClassifiedWindows = (
-    limitInfo?: CodexRateLimitInfo | null
-  ): { fiveHourWindow: CodexUsageWindow | null; weeklyWindow: CodexUsageWindow | null } => {
-    const primaryWindow = limitInfo?.primary_window ?? limitInfo?.primaryWindow ?? null;
-    const secondaryWindow = limitInfo?.secondary_window ?? limitInfo?.secondaryWindow ?? null;
-    const rawWindows = [primaryWindow, secondaryWindow];
-
-    let fiveHourWindow: CodexUsageWindow | null = null;
-    let weeklyWindow: CodexUsageWindow | null = null;
-
-    rawWindows.forEach((window) => {
-      if (!window) return;
-      const seconds = getWindowSeconds(window);
-      if (seconds === FIVE_HOUR_SECONDS && !fiveHourWindow) {
-        fiveHourWindow = window;
-      } else if (seconds === WEEK_SECONDS && !weeklyWindow) {
-        weeklyWindow = window;
-      }
-    });
-
-    if (!fiveHourWindow) {
-      fiveHourWindow = primaryWindow && primaryWindow !== weeklyWindow ? primaryWindow : null;
-    }
-    if (!weeklyWindow) {
-      weeklyWindow = secondaryWindow && secondaryWindow !== fiveHourWindow ? secondaryWindow : null;
-    }
-
-    return { fiveHourWindow, weeklyWindow };
-  };
-
-  const rateLimitReached = rateLimit?.limit_reached ?? rateLimit?.limitReached;
-  const rateAllowed = rateLimit?.allowed;
-  const rateWindows = pickClassifiedWindows(rateLimit);
-  addWindow(
-    'five-hour',
-    t('codex_quota.primary_window'),
-    rateWindows.fiveHourWindow,
-    rateLimitReached,
-    rateAllowed
-  );
-  addWindow(
-    'weekly',
-    t('codex_quota.secondary_window'),
-    rateWindows.weeklyWindow,
-    rateLimitReached,
-    rateAllowed
-  );
-
-  const codeReviewLimitReached = codeReviewLimit?.limit_reached ?? codeReviewLimit?.limitReached;
-  const codeReviewAllowed = codeReviewLimit?.allowed;
-  const codeReviewWindows = pickClassifiedWindows(codeReviewLimit);
-  addWindow(
-    'code-review-five-hour',
-    t('codex_quota.code_review_primary_window'),
-    codeReviewWindows.fiveHourWindow,
-    codeReviewLimitReached,
-    codeReviewAllowed
-  );
-  addWindow(
-    'code-review-weekly',
-    t('codex_quota.code_review_secondary_window'),
-    codeReviewWindows.weeklyWindow,
-    codeReviewLimitReached,
-    codeReviewAllowed
-  );
-
-  if (Array.isArray(additionalRateLimits)) {
-    additionalRateLimits.forEach((limitItem, index) => {
-      const rateInfo = limitItem?.rate_limit ?? limitItem?.rateLimit ?? null;
-      if (!rateInfo) return;
-
-      const limitName =
-        limitItem?.limit_name ??
-        limitItem?.limitName ??
-        limitItem?.metered_feature ??
-        limitItem?.meteredFeature ??
-        `additional-${index + 1}`;
-      const limitLabel = String(limitName).trim() || `additional-${index + 1}`;
-
-      addWindow(
-        `${limitLabel}-primary-${index}`,
-        t('codex_quota.additional_primary_window', { name: limitLabel }),
-        rateInfo.primary_window ?? rateInfo.primaryWindow ?? null,
-        rateInfo.limit_reached ?? rateInfo.limitReached,
-        rateInfo.allowed
-      );
-      addWindow(
-        `${limitLabel}-secondary-${index}`,
-        t('codex_quota.additional_secondary_window', { name: limitLabel }),
-        rateInfo.secondary_window ?? rateInfo.secondaryWindow ?? null,
-        rateInfo.limit_reached ?? rateInfo.limitReached,
-        rateInfo.allowed
-      );
-    });
-  }
-
-  return windows;
-};
+    };
+  });
 
 const requestAccountQuota = async (
   target: MonitoringAccountQuotaTarget,
   t: TFunction
 ): Promise<AccountQuotaEntry> => {
-  if (!target.accountId) {
-    throw new Error(t('codex_quota.missing_account_id'));
-  }
-
-  const result = await apiCallApi.request({
-    authIndex: target.authIndex,
-    method: 'GET',
-    url: CODEX_USAGE_URL,
-    header: {
-      ...CODEX_REQUEST_HEADERS,
-      'Chatgpt-Account-Id': target.accountId,
+  const payload = await requestCodexUsagePayload(
+    {
+      authIndex: target.authIndex,
+      accountId: target.accountId,
     },
-  });
-
-  if (result.statusCode < 200 || result.statusCode >= 300) {
-    throw new Error(getApiCallErrorMessage(result));
-  }
-
-  const payload = parseCodexUsagePayload(result.body ?? result.bodyText);
-  if (!payload) {
-    throw new Error(t('codex_quota.empty_windows'));
-  }
+    { emptyMessage: t('codex_quota.empty_windows') }
+  );
 
   return {
     key: target.key,
@@ -1234,10 +1085,24 @@ function AccountQuotaPanel({
     </button>
   );
 
-  const renderStateMessage = (message: ReactNode, hint?: ReactNode) => (
+  const renderStateMessage = (message: ReactNode, hint?: ReactNode, retry = false) => (
     <div className={styles.quotaStateMessage}>
       <span>{message}</span>
       {hint ? <small>{hint}</small> : null}
+      {retry ? (
+        <button
+          type="button"
+          className={styles.quotaRetryButton}
+          onClick={onRefreshQuota}
+          disabled={quotaLoading}
+        >
+          <IconRefreshCw
+            size={14}
+            className={quotaLoading ? styles.refreshIconSpinning : styles.refreshIcon}
+          />
+          <span>{t('codex_quota.retry_button')}</span>
+        </button>
+      ) : null}
     </div>
   );
 
@@ -1259,7 +1124,9 @@ function AccountQuotaPanel({
         ? renderStateMessage(
             t('codex_quota.load_failed', {
               message: quotaState.error || t('common.unknown_error'),
-            })
+            }),
+            undefined,
+            true
           )
         : null}
 
@@ -1273,7 +1140,11 @@ function AccountQuotaPanel({
 
       {singleQuotaEntry ? (
         singleQuotaEntry.error ? (
-          renderStateMessage(t('codex_quota.load_failed', { message: singleQuotaEntry.error }))
+          renderStateMessage(
+            t('codex_quota.load_failed', { message: singleQuotaEntry.error }),
+            undefined,
+            true
+          )
         ) : singleQuotaEntry.windows.length > 0 ? (
           renderQuotaWindows(singleQuotaEntry.windows)
         ) : (
@@ -1295,7 +1166,11 @@ function AccountQuotaPanel({
                 </div>
 
                 {entry.error
-                  ? renderStateMessage(t('codex_quota.load_failed', { message: entry.error }))
+                  ? renderStateMessage(
+                      t('codex_quota.load_failed', { message: entry.error }),
+                      undefined,
+                      true
+                    )
                   : entry.windows.length > 0
                     ? renderQuotaWindows(entry.windows)
                     : renderStateMessage(t('codex_quota.empty_windows'), t('codex_quota.idle'))}
@@ -1877,6 +1752,7 @@ export function MonitoringCenterPage() {
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
   const showConfirmation = useNotificationStore((state) => state.showConfirmation);
+  const requestMonitoringAvailability = useRequestMonitoringAvailability();
   const [timeRange, setTimeRange] = useState<MonitoringTimeRange>('today');
   const [customStartInput, setCustomStartInput] = useState(getTodayStartInputValue);
   const [customEndInput, setCustomEndInput] = useState(getCurrentInputValue);
@@ -1888,6 +1764,7 @@ export function MonitoringCenterPage() {
   const [selectedProvider, setSelectedProvider] = useState('all');
   const [selectedModel, setSelectedModel] = useState('all');
   const [selectedChannel, setSelectedChannel] = useState('all');
+  const [selectedApiKeyHash, setSelectedApiKeyHash] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState<StatusFilter>('all');
   const [expandedAccounts, setExpandedAccounts] = useState<Record<string, boolean>>({});
   const [focusedAccount, setFocusedAccount] = useState<string | null>(null);
@@ -1925,6 +1802,7 @@ export function MonitoringCenterPage() {
   const accountQuotaRequestIdsRef = useRef<Record<string, number>>({});
   const usageImportInputRef = useRef<HTMLInputElement | null>(null);
   const deferredSearch = useDeferredValue(searchInput);
+  const deferredSearchApiKeyHash = useMemo(() => sha256Hex(deferredSearch), [deferredSearch]);
   const accountPage =
     accountOverviewMode === 'card' ? accountPageByMode.card : accountPageByMode.table;
   const accountPageSize =
@@ -1982,8 +1860,10 @@ export function MonitoringCenterPage() {
     error: usageError,
     lastRefreshedAt,
     modelPrices,
+    apiKeyAliases,
     usageServiceAvailable,
     setModelPrices,
+    loadApiKeyAliases,
     syncModelPrices,
     exportUsage,
     importUsage,
@@ -2000,14 +1880,16 @@ export function MonitoringCenterPage() {
     usage,
     config,
     modelPrices,
+    apiKeyAliases,
     timeRange,
     customTimeRange,
     searchQuery: deferredSearch,
+    searchApiKeyHash: deferredSearchApiKeyHash,
   });
 
   const refreshAll = useCallback(async () => {
-    await Promise.all([loadUsage(), refreshMeta(false)]);
-  }, [loadUsage, refreshMeta]);
+    await Promise.all([loadUsage(), loadApiKeyAliases(), refreshMeta(false)]);
+  }, [loadApiKeyAliases, loadUsage, refreshMeta]);
 
   const setCurrentAccountPage = useCallback(
     (page: number) => {
@@ -2031,8 +1913,23 @@ export function MonitoringCenterPage() {
     connectionStatus === 'connected' && Number(autoRefreshMs) > 0 ? Number(autoRefreshMs) : null
   );
 
-  const overallLoading = usageLoading || monitoringLoading;
-  const combinedError = [usageError, monitoringError].filter(Boolean).join('；');
+  const monitoringUnavailable =
+    !requestMonitoringAvailability.checking && !requestMonitoringAvailability.available;
+  const monitoringUnavailableTitle =
+    requestMonitoringAvailability.reason === 'monitoring_disabled'
+      ? t('monitoring.request_monitoring_disabled_title')
+      : t('monitoring.request_monitoring_unavailable_title');
+  const monitoringUnavailableBody =
+    requestMonitoringAvailability.reason === 'monitoring_disabled'
+      ? t('monitoring.request_monitoring_disabled_body')
+      : requestMonitoringAvailability.reason === 'service_unavailable'
+        ? t('monitoring.request_monitoring_service_unavailable_body')
+        : t('monitoring.request_monitoring_not_configured_body');
+  const overallLoading =
+    usageLoading || monitoringLoading || requestMonitoringAvailability.checking;
+  const combinedError = monitoringUnavailable
+    ? monitoringError
+    : [usageError, monitoringError].filter(Boolean).join('；');
   const hasPrices = Object.keys(modelPrices).length > 0;
 
   useEffect(() => {
@@ -2099,6 +1996,21 @@ export function MonitoringCenterPage() {
     [filteredRows, t]
   );
 
+  const apiKeyOptions = useMemo(() => {
+    const optionMap = new Map<string, string>();
+    filteredRows.forEach((row) => {
+      if (!row.apiKeyHash || optionMap.has(row.apiKeyHash)) return;
+      optionMap.set(row.apiKeyHash, row.apiKeyLabel || row.apiKeyMasked || row.apiKeyHash);
+    });
+
+    return [
+      { value: 'all', label: t('monitoring.filter_all_api_keys') },
+      ...Array.from(optionMap.entries())
+        .sort((left, right) => left[1].localeCompare(right[1]))
+        .map(([value, label]) => ({ value, label })),
+    ];
+  }, [filteredRows, t]);
+
   const statusOptions = useMemo(
     () => [
       { value: 'all', label: t('monitoring.filter_all_statuses') },
@@ -2149,6 +2061,9 @@ export function MonitoringCenterPage() {
         if (selectedChannel !== 'all' && row.channel !== selectedChannel) {
           return false;
         }
+        if (selectedApiKeyHash !== 'all' && row.apiKeyHash !== selectedApiKeyHash) {
+          return false;
+        }
         if (selectedStatus === 'success' && row.failed) {
           return false;
         }
@@ -2160,6 +2075,7 @@ export function MonitoringCenterPage() {
     [
       filteredRows,
       selectedAccount,
+      selectedApiKeyHash,
       selectedChannel,
       selectedModel,
       selectedProvider,
@@ -2271,6 +2187,14 @@ export function MonitoringCenterPage() {
   );
 
   const hasSearchFilter = Boolean(deferredSearch.trim());
+  const hasScopeFilter =
+    selectedAccount !== 'all' ||
+    selectedProvider !== 'all' ||
+    selectedModel !== 'all' ||
+    selectedChannel !== 'all' ||
+    selectedApiKeyHash !== 'all' ||
+    selectedStatus !== 'all';
+  const hasActiveDataFilter = hasSearchFilter || hasScopeFilter;
   const failedGroupCount = groupedRealtimeRows.filter((row) => row.failureCalls > 0).length;
   const failedOnlyActive = selectedStatus === 'failed';
   const connectionTone: MonitoringStatusTone =
@@ -2408,6 +2332,7 @@ export function MonitoringCenterPage() {
     setSelectedProvider(snapshot.selectedProvider);
     setSelectedModel(snapshot.selectedModel);
     setSelectedChannel(snapshot.selectedChannel);
+    setSelectedApiKeyHash(snapshot.selectedApiKeyHash);
     setSelectedStatus(snapshot.selectedStatus);
   }, []);
 
@@ -2419,8 +2344,18 @@ export function MonitoringCenterPage() {
     setSelectedProvider('all');
     setSelectedModel('all');
     setSelectedChannel('all');
+    setSelectedApiKeyHash('all');
     setSelectedStatus('all');
   }, []);
+
+  const renderMonitoringEmptyState = () => (
+    <div className={styles.emptyTable}>
+      <strong>
+        {hasActiveDataFilter ? t('monitoring.no_filtered_data') : t('monitoring.no_data')}
+      </strong>
+      {!hasActiveDataFilter ? <span>{t('monitoring.empty_diagnostics_body')}</span> : null}
+    </div>
+  );
 
   const openCustomRangeModal = useCallback(() => {
     setCustomDraftStartInput(customStartInput || getTodayStartInputValue());
@@ -2569,6 +2504,7 @@ export function MonitoringCenterPage() {
           selectedProvider,
           selectedModel,
           selectedChannel,
+          selectedApiKeyHash,
           selectedStatus,
         };
       }
@@ -2581,6 +2517,7 @@ export function MonitoringCenterPage() {
       restoreFocusSnapshot,
       searchInput,
       selectedAccount,
+      selectedApiKeyHash,
       selectedChannel,
       selectedModel,
       selectedProvider,
@@ -2927,6 +2864,20 @@ export function MonitoringCenterPage() {
         </div>
       </div>
 
+      {monitoringUnavailable ? (
+        <div className={styles.callout}>
+          <strong>{monitoringUnavailableTitle}</strong>
+          <span>{monitoringUnavailableBody}</span>
+          <Link
+            to="/config"
+            className={styles.configLink}
+            onClick={() => localStorage.setItem('config-management:tab', 'manager')}
+          >
+            {t('monitoring.open_manager_config')}
+          </Link>
+        </div>
+      ) : null}
+
       <section className={styles.actionBar} aria-label={t('common.action')}>
         <div className={styles.actionGroup}>
           <button
@@ -3078,6 +3029,12 @@ export function MonitoringCenterPage() {
               options={channelOptions}
               onChange={setSelectedChannel}
               ariaLabel={t('monitoring.filter_channel')}
+            />
+            <Select
+              value={selectedApiKeyHash}
+              options={apiKeyOptions}
+              onChange={setSelectedApiKeyHash}
+              ariaLabel={t('monitoring.filter_api_key')}
             />
             <Select
               value={selectedStatus}
@@ -3386,13 +3343,7 @@ export function MonitoringCenterPage() {
                 })}
                 {sortedAccountRows.length === 0 ? (
                   <tr>
-                    <td colSpan={accountOverviewColumns.length}>
-                      <div className={styles.emptyTable}>
-                        {hasSearchFilter
-                          ? t('monitoring.no_filtered_data')
-                          : t('monitoring.no_data')}
-                      </div>
-                    </td>
+                    <td colSpan={accountOverviewColumns.length}>{renderMonitoringEmptyState()}</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -3426,9 +3377,7 @@ export function MonitoringCenterPage() {
             })}
           </div>
         ) : (
-          <div className={styles.emptyTable}>
-            {hasSearchFilter ? t('monitoring.no_filtered_data') : t('monitoring.no_data')}
-          </div>
+          renderMonitoringEmptyState()
         )}
         <PaginationControls
           count={sortedAccountRows.length}
@@ -3556,11 +3505,7 @@ export function MonitoringCenterPage() {
               ))}
               {realtimeLogRows.length === 0 ? (
                 <tr>
-                  <td colSpan={10}>
-                    <div className={styles.emptyTable}>
-                      {hasSearchFilter ? t('monitoring.no_filtered_data') : t('monitoring.no_data')}
-                    </div>
-                  </td>
+                  <td colSpan={10}>{renderMonitoringEmptyState()}</td>
                 </tr>
               ) : null}
             </tbody>
