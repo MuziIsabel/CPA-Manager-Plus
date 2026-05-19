@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { resolveUsageServiceBase } from '@/entities/usageService/baseResolver';
 import {
-  isUsageServiceId,
-  normalizeUsageServiceBase,
   usageServiceApi,
   type ApiKeyAlias,
   type ApiKeyAliasesResponse,
@@ -11,7 +10,6 @@ import {
   type UsageImportResponse,
 } from '@/services/api/usageService';
 import { useAuthStore, useUsageServiceStore } from '@/stores';
-import { detectApiBaseFromLocation } from '@/utils/connection';
 import { clearModelPrices, loadModelPrices, saveModelPrices, type ModelPrice } from '@/utils/usage';
 
 export interface UsagePayload {
@@ -60,88 +58,71 @@ export function useUsageData({
   const requestIdRef = useRef(0);
   const aliasRequestIdRef = useRef(0);
 
-  const resolveUsageServiceBase = useCallback(async (): Promise<string> => {
-    if (usageServiceEnabled && usageServiceBase) {
-      return usageServiceBase;
-    }
-
-    const candidates = Array.from(
-      new Set(
-        [apiBase, detectApiBaseFromLocation()]
-          .map((value) => normalizeUsageServiceBase(value || ''))
-          .filter(Boolean)
-      )
-    );
-
-    for (const candidate of candidates) {
-      try {
-        const info = await usageServiceApi.getInfo(candidate);
-        if (isUsageServiceId(info.service)) {
-          return candidate;
-        }
-      } catch {
-        // The regular CPA management API does not expose Usage Service metadata.
-      }
-    }
-
-    return '';
-  }, [apiBase, usageServiceBase, usageServiceEnabled]);
+  const resolveServiceBase = useCallback(
+    () =>
+      resolveUsageServiceBase({
+        apiBase,
+        usageServiceEnabled,
+        usageServiceBase,
+      }),
+    [apiBase, usageServiceBase, usageServiceEnabled]
+  );
 
   const getModelPricesFromApi = useCallback(async (): Promise<ModelPricesResponse> => {
-    const serviceBase = await resolveUsageServiceBase();
+    const serviceBase = await resolveServiceBase();
     if (!serviceBase) {
       return { prices: {} };
     }
     return usageServiceApi.getModelPrices(serviceBase, managementKey);
-  }, [managementKey, resolveUsageServiceBase]);
+  }, [managementKey, resolveServiceBase]);
 
   const getApiKeyAliasesFromApi = useCallback(async (): Promise<ApiKeyAliasesResponse> => {
-    const serviceBase = await resolveUsageServiceBase();
+    const serviceBase = await resolveServiceBase();
     if (!serviceBase) {
       return { items: [] };
     }
     return usageServiceApi.getApiKeyAliases(serviceBase, managementKey);
-  }, [managementKey, resolveUsageServiceBase]);
+  }, [managementKey, resolveServiceBase]);
 
   const saveModelPricesToApi = useCallback(
     async (prices: Record<string, ModelPrice>): Promise<ModelPricesResponse> => {
-      const serviceBase = await resolveUsageServiceBase();
+      const serviceBase = await resolveServiceBase();
       if (!serviceBase) {
         throw new Error('model_price_api_unavailable');
       }
       return usageServiceApi.saveModelPrices(serviceBase, prices, managementKey);
     },
-    [managementKey, resolveUsageServiceBase]
+    [managementKey, resolveServiceBase]
   );
 
   const syncModelPricesFromApi = useCallback(
     async (models?: string[]): Promise<ModelPriceSyncResponse> => {
-      const serviceBase = await resolveUsageServiceBase();
+      const serviceBase = await resolveServiceBase();
       if (!serviceBase) {
         throw new Error('model_price_sync_requires_usage_service');
       }
       return usageServiceApi.syncModelPrices(serviceBase, managementKey, models);
     },
-    [managementKey, resolveUsageServiceBase]
+    [managementKey, resolveServiceBase]
   );
 
   const exportUsageFromApi = useCallback(async (): Promise<UsageExportResponse> => {
-    const serviceBase = await resolveUsageServiceBase();
+    const serviceBase = await resolveServiceBase();
     if (!serviceBase) {
       throw new Error('usage_import_export_requires_usage_service');
     }
     return usageServiceApi.exportUsage(serviceBase, managementKey);
-  }, [managementKey, resolveUsageServiceBase]);
+  }, [managementKey, resolveServiceBase]);
 
   const importUsageToApi = useCallback(
     async (file: File): Promise<UsageImportResponse> => {
-      const serviceBase = await resolveUsageServiceBase();
+      const serviceBase = await resolveServiceBase();
       if (!serviceBase) {
         throw new Error('usage_import_export_requires_usage_service');
       }
       return usageServiceApi.importUsage(serviceBase, file, managementKey);
     },
-    [managementKey, resolveUsageServiceBase]
+    [managementKey, resolveServiceBase]
   );
 
   const loadModelPricesFromStorage = useCallback(async () => {
@@ -195,7 +176,7 @@ export function useUsageData({
     setError('');
 
     try {
-      const serviceBase = await resolveUsageServiceBase();
+      const serviceBase = await resolveServiceBase();
       if (!serviceBase) {
         setUsageServiceAvailable(false);
         setUsage(null);
@@ -215,7 +196,7 @@ export function useUsageData({
         setLoading(false);
       }
     }
-  }, [loadUsageEvents, managementKey, resolveUsageServiceBase]);
+  }, [loadUsageEvents, managementKey, resolveServiceBase]);
 
   useEffect(() => {
     void loadModelPricesFromStorage();

@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  buildUsageServiceBaseCandidates,
+  hasConfiguredUsageServiceBase,
+} from '@/entities/usageService/baseResolver';
+import {
   isUsageServiceId,
-  normalizeUsageServiceBase,
   usageServiceApi,
 } from '@/services/api/usageService';
 import { useAuthStore, useUsageServiceStore } from '@/stores';
-import { detectApiBaseFromLocation } from '@/utils/connection';
 
 export type RequestMonitoringUnavailableReason =
   | 'checking'
@@ -34,17 +36,11 @@ export function useRequestMonitoringAvailability(): RequestMonitoringAvailabilit
   });
 
   const candidates = useMemo(() => {
-    return Array.from(
-      new Set(
-        [
-          usageServiceEnabled && usageServiceBase ? usageServiceBase : '',
-          apiBase,
-          detectApiBaseFromLocation(),
-        ]
-          .map((value) => normalizeUsageServiceBase(value || ''))
-          .filter(Boolean)
-      )
-    );
+    return buildUsageServiceBaseCandidates({
+      apiBase,
+      usageServiceEnabled,
+      usageServiceBase,
+    });
   }, [apiBase, usageServiceBase, usageServiceEnabled]);
 
   useEffect(() => {
@@ -62,7 +58,10 @@ export function useRequestMonitoringAvailability(): RequestMonitoringAvailabilit
       }
 
       setState((current) => ({ ...current, checking: true, reason: 'checking' }));
-      const hasConfiguredUsageService = Boolean(usageServiceEnabled && usageServiceBase);
+      const hasConfiguredUsageService = hasConfiguredUsageServiceBase({
+        usageServiceEnabled,
+        usageServiceBase,
+      });
 
       for (const candidate of candidates) {
         try {
