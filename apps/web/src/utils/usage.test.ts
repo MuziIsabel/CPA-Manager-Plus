@@ -113,9 +113,7 @@ describe('usage detail collection', () => {
       },
     };
 
-    expect(collectUsageDetails(usageData)[0].auth_project_id_snapshot).toBe(
-      'vertex-project-42'
-    );
+    expect(collectUsageDetails(usageData)[0].auth_project_id_snapshot).toBe('vertex-project-42');
     expect(collectUsageDetailsWithEndpoint(usageData)[0].auth_project_id_snapshot).toBe(
       'vertex-project-42'
     );
@@ -175,6 +173,33 @@ describe('usage detail collection', () => {
     expect(detail.__modelName).toBe('gpt-5.4');
     expect(detail.__resolvedModel).toBe('gpt-5.5');
     expect(collectUsageDetailsWithEndpoint(usageData)[0].__resolvedModel).toBe('gpt-5.5');
+  });
+
+  it('copies TTFT metadata into normalized usage details', () => {
+    const usageData = {
+      apis: {
+        'POST /v1/chat/completions': {
+          models: {
+            'gpt-5.4': {
+              details: [
+                {
+                  timestamp: '2026-05-19T10:00:00Z',
+                  source: 'alice@example.com',
+                  auth_index: 'auth-1',
+                  latency_ms: 1500,
+                  ttft_ms: 450,
+                  tokens: { output_tokens: 20 },
+                  failed: false,
+                },
+              ],
+            },
+          },
+        },
+      },
+    };
+
+    expect(collectUsageDetails(usageData)[0].ttft_ms).toBe(450);
+    expect(collectUsageDetailsWithEndpoint(usageData)[0].ttft_ms).toBe(450);
   });
 
   it('normalizes CPA mirrored cached tokens without double counting fine-grained cache', () => {

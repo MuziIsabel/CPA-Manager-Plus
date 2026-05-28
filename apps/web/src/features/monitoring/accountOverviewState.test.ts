@@ -73,6 +73,8 @@ const createEventRow = (overrides: Partial<MonitoringEventRow> = {}): Monitoring
   failed: overrides.failed ?? false,
   statsIncluded: overrides.statsIncluded ?? true,
   latencyMs: overrides.latencyMs ?? 120,
+  ttftMs: overrides.ttftMs ?? 40,
+  tokensPerSecond: overrides.tokensPerSecond ?? 62.5,
   inputTokens: overrides.inputTokens ?? 10,
   outputTokens: overrides.outputTokens ?? 5,
   reasoningTokens: overrides.reasoningTokens ?? 0,

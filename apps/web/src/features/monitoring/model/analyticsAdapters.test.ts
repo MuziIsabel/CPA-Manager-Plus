@@ -30,6 +30,7 @@ describe('buildUsageDetailsFromAnalyticsEvents', () => {
         reasoning_tokens: 1,
         total_tokens: 18,
         latency_ms: 123,
+        ttft_ms: 45,
         failed: true,
         fail_status_code: 429,
         fail_summary: 'rate limit exceeded',
@@ -43,6 +44,8 @@ describe('buildUsageDetailsFromAnalyticsEvents', () => {
       __resolvedModel: 'upstream-model',
       auth_project_id_snapshot: 'project-1',
       reasoning_effort: 'medium',
+      latency_ms: 123,
+      ttft_ms: 45,
       tokens: {
         cached_tokens: 0,
         cache_read_tokens: 4,

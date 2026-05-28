@@ -50,6 +50,7 @@ export interface UsageDetail {
   reasoning_effort?: string;
   reasoningEffort?: string;
   latency_ms?: number;
+  ttft_ms?: number;
   tokens: UsageTokens;
   failed: boolean;
   fail_status_code?: number | null;
@@ -106,11 +107,7 @@ const toPositiveNumber = (value: unknown): number | undefined => {
 };
 
 const toOptionalNumber = (value: unknown): number | undefined => {
-  if (
-    value === null ||
-    value === undefined ||
-    (typeof value === 'string' && value.trim() === '')
-  ) {
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
     return undefined;
   }
   const numberValue = toFiniteNumber(value);
@@ -135,8 +132,7 @@ export const compatibleCachedTokens = (
   );
   if (cached <= 0) return 0;
   const fineGrained =
-    Math.max(toFiniteNumber(cacheReadTokens), 0) +
-    Math.max(toFiniteNumber(cacheCreationTokens), 0);
+    Math.max(toFiniteNumber(cacheReadTokens), 0) + Math.max(toFiniteNumber(cacheCreationTokens), 0);
   return Math.max(cached - fineGrained, 0);
 };
 
@@ -224,9 +220,7 @@ export function normalizeUsageSourceId(
     if (BACKEND_MASKED_SOURCE_REGEX.test(trimmed)) return trimmed;
     const maskedValue = trimmed.slice(USAGE_SOURCE_PREFIX_MASKED.length).trim();
     const extracted = extractRawSecretFromText(maskedValue) || extractRawSecretFromText(trimmed);
-    return extracted
-      ? `${USAGE_SOURCE_PREFIX_KEY}${fnv1a64Hex(extracted)}`
-      : trimmed;
+    return extracted ? `${USAGE_SOURCE_PREFIX_KEY}${fnv1a64Hex(extracted)}` : trimmed;
   }
   if (trimmed.startsWith(USAGE_SOURCE_PREFIX_TEXT)) {
     const textSource = trimmed.slice(USAGE_SOURCE_PREFIX_TEXT.length).trim();
@@ -276,6 +270,25 @@ export function extractLatencyMs(detail: unknown): number | null {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
+export function extractTTFTMs(detail: unknown): number | null {
+  const record = isRecord(detail) ? detail : null;
+  const rawValue =
+    record?.ttft_ms ??
+    record?.ttftMs ??
+    record?.time_to_first_token_ms ??
+    record?.timeToFirstTokenMs;
+  if (
+    rawValue === null ||
+    rawValue === undefined ||
+    (typeof rawValue === 'string' && rawValue.trim() === '')
+  ) {
+    return null;
+  }
+
+  const parsed = Number(rawValue);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
 const readTokens = (detail: Record<string, unknown>): UsageTokens => {
   const tokensRaw = isRecord(detail.tokens) ? detail.tokens : {};
   const cacheReadTokens = toFiniteNumber(tokensRaw.cache_read_tokens ?? tokensRaw.cacheReadTokens);
@@ -295,7 +308,12 @@ const readTokens = (detail: Record<string, unknown>): UsageTokens => {
   const totalTokens =
     explicitTotalTokens > 0
       ? explicitTotalTokens
-      : inputTokens + outputTokens + reasoningTokens + cachedTokens + cacheReadTokens + cacheCreationTokens;
+      : inputTokens +
+        outputTokens +
+        reasoningTokens +
+        cachedTokens +
+        cacheReadTokens +
+        cacheCreationTokens;
   return {
     input_tokens: inputTokens,
     output_tokens: outputTokens,
@@ -310,11 +328,7 @@ const readTokens = (detail: Record<string, unknown>): UsageTokens => {
 
 const normalizeSourceWithCache = (sourceCache: Map<string, string>, value: unknown): string => {
   const raw =
-    typeof value === 'string'
-      ? value
-      : value === null || value === undefined
-        ? ''
-        : String(value);
+    typeof value === 'string' ? value : value === null || value === undefined ? '' : String(value);
   const trimmed = raw.trim();
   if (!trimmed) return '';
 
@@ -353,6 +367,7 @@ export function collectUsageDetails(usageData: unknown): UsageDetail[] {
         const timestamp = detailRaw.timestamp;
         const timestampMs = parseTimestampMs(timestamp);
         const latencyMs = extractLatencyMs(detailRaw);
+        const ttftMs = extractTTFTMs(detailRaw);
         const failRaw = isRecord(detailRaw.fail) ? detailRaw.fail : {};
         details.push({
           timestamp,
@@ -362,7 +377,9 @@ export function collectUsageDetails(usageData: unknown): UsageDetail[] {
             detailRaw.AuthIndex ??
             null) as UsageDetail['auth_index'],
           api_key_hash: readDetailString(detailRaw.api_key_hash ?? detailRaw.apiKeyHash),
-          account_snapshot: readDetailString(detailRaw.account_snapshot ?? detailRaw.accountSnapshot),
+          account_snapshot: readDetailString(
+            detailRaw.account_snapshot ?? detailRaw.accountSnapshot
+          ),
           auth_label_snapshot: readDetailString(
             detailRaw.auth_label_snapshot ?? detailRaw.authLabelSnapshot
           ),
@@ -382,6 +399,7 @@ export function collectUsageDetails(usageData: unknown): UsageDetail[] {
             detailRaw.reasoning_effort ?? detailRaw.reasoningEffort
           ),
           latency_ms: latencyMs ?? undefined,
+          ttft_ms: ttftMs ?? undefined,
           tokens: readTokens(detailRaw),
           failed: detailRaw.failed === true,
           fail_status_code:
@@ -436,6 +454,7 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
         const timestamp = detailRaw.timestamp;
         const timestampMs = parseTimestampMs(timestamp);
         const latencyMs = extractLatencyMs(detailRaw);
+        const ttftMs = extractTTFTMs(detailRaw);
         const failRaw = isRecord(detailRaw.fail) ? detailRaw.fail : {};
         details.push({
           timestamp,
@@ -445,7 +464,9 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
             detailRaw.AuthIndex ??
             null) as UsageDetail['auth_index'],
           api_key_hash: readDetailString(detailRaw.api_key_hash ?? detailRaw.apiKeyHash),
-          account_snapshot: readDetailString(detailRaw.account_snapshot ?? detailRaw.accountSnapshot),
+          account_snapshot: readDetailString(
+            detailRaw.account_snapshot ?? detailRaw.accountSnapshot
+          ),
           auth_label_snapshot: readDetailString(
             detailRaw.auth_label_snapshot ?? detailRaw.authLabelSnapshot
           ),
@@ -465,6 +486,7 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
             detailRaw.reasoning_effort ?? detailRaw.reasoningEffort
           ),
           latency_ms: latencyMs ?? undefined,
+          ttft_ms: ttftMs ?? undefined,
           tokens: readTokens(detailRaw),
           failed: detailRaw.failed === true,
           fail_status_code:
@@ -515,7 +537,14 @@ export function extractTotalTokens(detail: unknown): number {
     0
   );
 
-  return inputTokens + outputTokens + reasoningTokens + cachedTokens + cacheReadTokens + cacheCreationTokens;
+  return (
+    inputTokens +
+    outputTokens +
+    reasoningTokens +
+    cachedTokens +
+    cacheReadTokens +
+    cacheCreationTokens
+  );
 }
 
 export function calculateCost(
@@ -552,8 +581,7 @@ export function calculateCost(
 
   const promptTokens = Math.max(inputTokens - cachedTokens, 0);
   const promptCost = (promptTokens / TOKENS_PER_PRICE_UNIT) * promptPrice;
-  const completionCost =
-    (completionTokens / TOKENS_PER_PRICE_UNIT) * completionPrice;
+  const completionCost = (completionTokens / TOKENS_PER_PRICE_UNIT) * completionPrice;
   const cachedCost = (cachedTokens / TOKENS_PER_PRICE_UNIT) * (Number(price.cache) || 0);
   const total = promptCost + cachedCost + completionCost;
   return Number.isFinite(total) && total > 0 ? total : 0;

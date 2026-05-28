@@ -611,6 +611,7 @@ export interface MonitoringAnalyticsEventRow {
   reasoning_tokens: number;
   total_tokens: number;
   latency_ms: number | null;
+  ttft_ms?: number | null;
   failed: boolean;
   fail_status_code?: number | null;
   fail_summary?: string;

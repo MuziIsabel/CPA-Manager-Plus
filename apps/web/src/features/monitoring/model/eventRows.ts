@@ -13,6 +13,24 @@ import { sanitizeApiKeyDisplayText, type ApiKeyDisplayInfo } from './apiKeys';
 import { buildHourLabel, buildLocalDayKey } from './range';
 import type { MonitoringAuthMeta, MonitoringChannelMeta, MonitoringEventRow } from './types';
 
+const toDurationMs = (value: unknown): number | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
+  return value;
+};
+
+const calculateOutputTokensPerSecond = (
+  outputTokens: number,
+  latencyMs: number | null,
+  ttftMs: number | null
+): number | null => {
+  if (outputTokens <= 0 || latencyMs === null || latencyMs <= 0) return null;
+
+  const outputDurationMs = ttftMs !== null && latencyMs > ttftMs ? latencyMs - ttftMs : latencyMs;
+  if (outputDurationMs <= 0) return null;
+
+  return outputTokens / (outputDurationMs / 1000);
+};
+
 export const buildEventRows = (
   details: UsageDetailWithEndpoint[],
   authMetaMap: Map<string, MonitoringAuthMeta>,
@@ -74,17 +92,12 @@ export const buildEventRows = (
       const endpointMethod = readString(detail.__endpointMethod) || '-';
       const endpointPath = readString(detail.__endpointPath) || endpoint;
       const resolvedModel = readString(detail.__resolvedModel);
-      const projectId = readString(
-        detail.auth_project_id_snapshot ?? detail.authProjectIdSnapshot
-      );
+      const projectId = readString(detail.auth_project_id_snapshot ?? detail.authProjectIdSnapshot);
       const inputTokens = Math.max(Number(detail.tokens?.input_tokens) || 0, 0);
       const outputTokens = Math.max(Number(detail.tokens?.output_tokens) || 0, 0);
       const reasoningTokens = Math.max(Number(detail.tokens?.reasoning_tokens) || 0, 0);
       const cacheReadTokens = Math.max(Number(detail.tokens?.cache_read_tokens) || 0, 0);
-      const cacheCreationTokens = Math.max(
-        Number(detail.tokens?.cache_creation_tokens) || 0,
-        0
-      );
+      const cacheCreationTokens = Math.max(Number(detail.tokens?.cache_creation_tokens) || 0, 0);
       const cachedTokens = Math.max(
         Math.max(Number(detail.tokens?.cached_tokens) || 0, 0),
         Math.max(Number(detail.tokens?.cache_tokens) || 0, 0)
@@ -93,6 +106,9 @@ export const buildEventRows = (
         Number(detail.tokens?.total_tokens) || 0,
         extractTotalTokens(detail)
       );
+      const latencyMs = toDurationMs(detail.latency_ms);
+      const ttftMs = toDurationMs(detail.ttft_ms);
+      const tokensPerSecond = calculateOutputTokensPerSecond(outputTokens, latencyMs, ttftMs);
       const totalCost = calculateCost(detail, modelPrices);
       const statsIncluded = detail.failed === true || inputTokens > 0 || outputTokens > 0;
       const dayKey = buildLocalDayKey(timestampMs);
@@ -139,7 +155,9 @@ export const buildEventRows = (
         channelDisabled: channelMeta?.disabled || false,
         failed: detail.failed === true,
         statsIncluded,
-        latencyMs: typeof detail.latency_ms === 'number' ? detail.latency_ms : null,
+        latencyMs,
+        ttftMs,
+        tokensPerSecond,
         inputTokens,
         outputTokens,
         reasoningTokens,

@@ -170,6 +170,8 @@ export type MonitoringEventRow = {
   failed: boolean;
   statsIncluded: boolean;
   latencyMs: number | null;
+  ttftMs: number | null;
+  tokensPerSecond: number | null;
   inputTokens: number;
   outputTokens: number;
   reasoningTokens: number;

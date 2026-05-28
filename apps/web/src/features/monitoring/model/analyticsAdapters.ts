@@ -365,6 +365,7 @@ export const buildUsageDetailsFromAnalyticsEvents = (
     auth_project_id_snapshot: readString(item.auth_project_id_snapshot),
     reasoning_effort: readString(item.reasoning_effort),
     latency_ms: item.latency_ms ?? undefined,
+    ttft_ms: item.ttft_ms ?? undefined,
     tokens: {
       input_tokens: item.input_tokens,
       output_tokens: item.output_tokens,

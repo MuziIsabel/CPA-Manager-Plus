@@ -46,6 +46,8 @@ const createMonitoringEventRow = (
   failed: overrides.failed ?? false,
   statsIncluded: overrides.statsIncluded ?? true,
   latencyMs: overrides.latencyMs ?? 1200,
+  ttftMs: overrides.ttftMs ?? 200,
+  tokensPerSecond: overrides.tokensPerSecond ?? 5,
   inputTokens: overrides.inputTokens ?? 10,
   outputTokens: overrides.outputTokens ?? 5,
   reasoningTokens: overrides.reasoningTokens ?? 0,
@@ -280,6 +282,7 @@ describe('mergeMonitoringEventsPageItems', () => {
     reasoning_tokens: 0,
     total_tokens: 15,
     latency_ms: 1200,
+    ttft_ms: 200,
     failed: false,
   });
 
@@ -293,7 +296,8 @@ describe('mergeMonitoringEventsPageItems', () => {
       createAnalyticsEvent('event-2', 1_768_759_001_000),
     ];
 
-    expect(mergeMonitoringEventsPageItems(previous, nextPage, null).map((item) => item.event_hash))
-      .toEqual(['event-3', 'event-2', 'event-1']);
+    expect(
+      mergeMonitoringEventsPageItems(previous, nextPage, null).map((item) => item.event_hash)
+    ).toEqual(['event-3', 'event-2', 'event-1']);
   });
 });
