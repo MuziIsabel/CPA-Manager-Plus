@@ -391,6 +391,8 @@
     "codex_add_button": "添加配置",
     "codex_empty_title": "暂无Codex配置",
     "codex_empty_desc": "点击上方按钮添加第一个配置",
+    "codex_filtered_empty_title": "没有匹配的 Codex 配置",
+    "codex_filtered_empty_desc": "当前模型筛选下没有匹配的 Codex 配置，请清除筛选后重试。",
     "codex_item_title": "Codex配置",
     "codex_add_modal_title": "添加Codex API配置",
     "codex_add_modal_key_label": "API密钥:",

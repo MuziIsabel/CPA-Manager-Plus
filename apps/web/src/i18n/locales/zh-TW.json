@@ -390,6 +390,8 @@
     "codex_add_button": "新增設定",
     "codex_empty_title": "暫無 Codex 設定",
     "codex_empty_desc": "點擊上方按鈕新增第一個設定",
+    "codex_filtered_empty_title": "沒有符合的 Codex 設定",
+    "codex_filtered_empty_desc": "目前模型篩選下沒有符合的 Codex 設定，請清除篩選後重試。",
     "codex_item_title": "Codex 設定",
     "codex_add_modal_title": "新增 Codex API 設定",
     "codex_add_modal_key_label": "API 金鑰:",

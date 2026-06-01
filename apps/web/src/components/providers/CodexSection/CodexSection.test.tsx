@@ -2,6 +2,8 @@ import { act } from 'react';
 import { create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { Button } from '@/components/ui/Button';
+import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
+import { Select } from '@/components/ui/Select';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import type { ProviderKeyConfig } from '@/types';
 import { CodexSection } from './CodexSection';
@@ -33,6 +35,15 @@ const toggleSwitch = (toggle: ReactTestInstance, value: boolean) => {
 
   act(() => {
     onChange(value);
+  });
+};
+
+const selectCheckbox = (checkbox: ReactTestInstance) => {
+  const onChange = checkbox.props.onChange as ((value: boolean) => void) | undefined;
+  if (!onChange) throw new Error('Checkbox change handler not found');
+
+  act(() => {
+    onChange(true);
   });
 };
 
@@ -107,5 +118,79 @@ describe('CodexSection', () => {
     expect(getText(ascendingRows[ascendingRows.length - 1])).toContain(
       'https://disabled.example.com/v1'
     );
+  });
+
+  it('uses the OpenAI-style sort selector and model filter without including disabled providers in sorting', () => {
+    const configs: ProviderKeyConfig[] = [
+      {
+        apiKey: 'alpha-key',
+        baseUrl: 'https://alpha.example.com/v1',
+        priority: 1,
+        models: [{ name: 'alpha-model' }],
+      },
+      {
+        apiKey: 'disabled-key',
+        baseUrl: 'https://disabled.example.com/v1',
+        priority: 99,
+        excludedModels: ['*'],
+        models: [{ name: 'beta-model' }],
+      },
+      {
+        apiKey: 'beta-key',
+        baseUrl: 'https://beta.example.com/v1',
+        priority: 9,
+        models: [{ name: 'beta-model' }],
+      },
+    ];
+    const onEdit = vi.fn();
+    const onToggle = vi.fn();
+    let renderer!: ReactTestRenderer;
+
+    act(() => {
+      renderer = create(
+        <CodexSection
+          configs={configs}
+          usageByProvider={new Map()}
+          loading={false}
+          disableControls={false}
+          isSwitching={false}
+          onAdd={() => {}}
+          onEdit={onEdit}
+          onDelete={() => {}}
+          onToggle={onToggle}
+        />
+      );
+    });
+
+    const sortSelect = renderer.root.findByType(Select);
+    expect(sortSelect.props.options.map((option: { value: string }) => option.value)).toEqual([
+      'priority',
+      'name',
+      'recent-success',
+    ]);
+
+    const modelFilterButton = renderer.root
+      .findAllByType('button')
+      .find((button) => button.props['aria-label'] === 'ai_providers.model_search_placeholder');
+    if (!modelFilterButton) throw new Error('Model filter button not found');
+    clickButton(modelFilterButton);
+
+    const betaCheckbox = renderer.root
+      .findAllByType(SelectionCheckbox)
+      .find((checkbox) => getText(checkbox).includes('beta-model'));
+    if (!betaCheckbox) throw new Error('Beta model checkbox not found');
+    selectCheckbox(betaCheckbox);
+
+    const filteredRows = getRows(renderer);
+    expect(filteredRows).toHaveLength(2);
+    expect(getText(filteredRows[0])).toContain('https://beta.example.com/v1');
+    expect(getText(filteredRows[1])).toContain('https://disabled.example.com/v1');
+
+    const [editButton] = filteredRows[0].findAllByType(Button);
+    clickButton(editButton);
+    toggleSwitch(filteredRows[0].findByType(ToggleSwitch), false);
+
+    expect(onEdit).toHaveBeenLastCalledWith(2);
+    expect(onToggle).toHaveBeenLastCalledWith(2, false);
   });
 });

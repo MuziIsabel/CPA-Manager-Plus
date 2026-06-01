@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { ProviderKeyConfig } from '@/types';
-import { sortCodexConfigsByPriority } from './sort';
+import { buildRecentRequestCompositeKey } from '@/utils/recentRequests';
+import type { ProviderRecentUsageMap } from '../utils';
+import { sortCodexConfigs, sortCodexConfigsByPriority } from './sort';
 
 describe('sortCodexConfigsByPriority', () => {
   const configs: ProviderKeyConfig[] = [
@@ -48,5 +50,94 @@ describe('sortCodexConfigsByPriority', () => {
       'c',
       'd',
     ]);
+  });
+});
+
+describe('sortCodexConfigs', () => {
+  const configs: ProviderKeyConfig[] = [
+    {
+      apiKey: 'alpha-key',
+      baseUrl: 'https://alpha.example.com/v1',
+      prefix: 'alpha',
+      priority: 2,
+      models: [{ name: 'gpt-5' }],
+    },
+    {
+      apiKey: 'disabled-key',
+      baseUrl: 'https://disabled.example.com/v1',
+      prefix: 'disabled',
+      priority: 99,
+      excludedModels: ['*'],
+      models: [{ name: 'gpt-5' }],
+    },
+    {
+      apiKey: 'beta-key',
+      baseUrl: 'https://beta.example.com/v1',
+      prefix: 'beta',
+      priority: 6,
+      models: [{ name: 'gpt-5.5' }],
+    },
+    {
+      apiKey: 'unset-key',
+      baseUrl: 'https://unset.example.com/v1',
+      models: [{ name: 'gpt-5.5' }],
+    },
+  ];
+
+  const buildUsage = (): ProviderRecentUsageMap =>
+    new Map([
+      [
+        'codex',
+        new Map([
+          [
+            buildRecentRequestCompositeKey('https://alpha.example.com/v1', 'alpha-key'),
+            { success: 10, failed: 0, recentRequests: [{ success: 3, failed: 0 }] },
+          ],
+          [
+            buildRecentRequestCompositeKey('https://beta.example.com/v1', 'beta-key'),
+            { success: 20, failed: 0, recentRequests: [{ success: 8, failed: 0 }] },
+          ],
+          [
+            buildRecentRequestCompositeKey('https://disabled.example.com/v1', 'disabled-key'),
+            { success: 99, failed: 0, recentRequests: [{ success: 99, failed: 0 }] },
+          ],
+        ]),
+      ],
+    ]);
+
+  it('sorts by the selected OpenAI-style option while disabled providers stay at the bottom', () => {
+    expect(
+      sortCodexConfigs(configs, {
+        sortOption: 'recent-success',
+        sortDirection: 'desc',
+        usageByProvider: buildUsage(),
+      }).map((item) => item.originalIndex)
+    ).toEqual([2, 0, 3, 1]);
+
+    expect(
+      sortCodexConfigs(configs, {
+        sortOption: 'name',
+        sortDirection: 'asc',
+        usageByProvider: buildUsage(),
+      }).map((item) => item.originalIndex)
+    ).toEqual([0, 2, 3, 1]);
+  });
+
+  it('filters by selected models before sorting and keeps matching disabled providers last', () => {
+    expect(
+      sortCodexConfigs(configs, {
+        sortOption: 'priority',
+        sortDirection: 'desc',
+        selectedModels: new Set(['gpt-5.5']),
+      }).map((item) => item.originalIndex)
+    ).toEqual([2, 3]);
+
+    expect(
+      sortCodexConfigs(configs, {
+        sortOption: 'priority',
+        sortDirection: 'desc',
+        selectedModels: new Set(['gpt-5']),
+      }).map((item) => item.originalIndex)
+    ).toEqual([0, 1]);
   });
 });

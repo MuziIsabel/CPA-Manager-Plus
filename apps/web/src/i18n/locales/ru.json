@@ -390,6 +390,8 @@
     "codex_add_button": "Добавить конфигурацию",
     "codex_empty_title": "Конфигурации Codex отсутствуют",
     "codex_empty_desc": "Нажмите кнопку выше, чтобы добавить первую конфигурацию",
+    "codex_filtered_empty_title": "Нет подходящих конфигураций Codex",
+    "codex_filtered_empty_desc": "Нет конфигураций Codex, подходящих под текущий фильтр моделей. Очистите фильтр и попробуйте снова.",
     "codex_item_title": "Конфигурация Codex",
     "codex_add_modal_title": "Добавление конфигурации Codex API",
     "codex_add_modal_key_label": "API-ключ:",

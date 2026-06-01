@@ -391,6 +391,8 @@
     "codex_add_button": "Add Configuration",
     "codex_empty_title": "No Codex Configuration",
     "codex_empty_desc": "Click the button above to add the first configuration",
+    "codex_filtered_empty_title": "No matching Codex configurations",
+    "codex_filtered_empty_desc": "No Codex configurations match the current model filter. Clear the filter and try again.",
     "codex_item_title": "Codex Configuration",
     "codex_add_modal_title": "Add Codex API Configuration",
     "codex_add_modal_key_label": "API Key:",
