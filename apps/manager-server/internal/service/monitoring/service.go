@@ -37,6 +37,7 @@ type Request struct {
 
 type Filters struct {
 	Models            []string `json:"models"`
+	Providers         []string `json:"providers"`
 	Accounts          []string `json:"accounts"`
 	AuthIndices       []string `json:"auth_indices"`
 	APIKeyHashes      []string `json:"api_key_hashes"`
@@ -54,6 +55,9 @@ type Include struct {
 	ChannelShare       bool        `json:"channel_share"`
 	ModelStats         bool        `json:"model_stats"`
 	FailureSources     bool        `json:"failure_sources"`
+	AccountStats       bool        `json:"account_stats"`
+	APIKeyStats        bool        `json:"api_key_stats"`
+	FilterOptions      bool        `json:"filter_options"`
 	TaskBuckets        bool        `json:"task_buckets"`
 	RecentFailures     int         `json:"recent_failures"`
 	EventsPage         *EventsPage `json:"events_page"`
@@ -75,6 +79,9 @@ type Response struct {
 	ModelStats         []ModelStat        `json:"model_stats,omitempty"`
 	ChannelShare       []ChannelShareRow  `json:"channel_share,omitempty"`
 	FailureSources     []FailureSourceRow `json:"failure_sources,omitempty"`
+	AccountStats       []AccountStatRow   `json:"account_stats,omitempty"`
+	APIKeyStats        []APIKeyStatRow    `json:"api_key_stats,omitempty"`
+	FilterOptions      *FilterOptions     `json:"filter_options,omitempty"`
 	TaskBuckets        []TaskBucketRow    `json:"task_buckets,omitempty"`
 	RecentFailures     []RecentFailure    `json:"recent_failures,omitempty"`
 	Events             *EventsResponse    `json:"events,omitempty"`
@@ -167,6 +174,78 @@ type FailureSourceRow struct {
 	Failure              int64    `json:"failure"`
 	LastSeenMS           int64    `json:"last_seen_ms"`
 	AvgLatencyMS         *float64 `json:"average_latency_ms"`
+}
+
+type AccountStatRow struct {
+	ID                   string                `json:"id"`
+	AccountSnapshot      string                `json:"account_snapshot,omitempty"`
+	AuthLabelSnapshot    string                `json:"auth_label_snapshot,omitempty"`
+	AuthProviderSnapshot string                `json:"auth_provider_snapshot,omitempty"`
+	AuthIndices          []string              `json:"auth_indices,omitempty"`
+	Sources              []string              `json:"sources,omitempty"`
+	SourceHashes         []string              `json:"source_hashes,omitempty"`
+	Calls                int64                 `json:"calls"`
+	SuccessCalls         int64                 `json:"success_calls"`
+	FailureCalls         int64                 `json:"failure_calls"`
+	SuccessRate          float64               `json:"success_rate"`
+	InputTokens          int64                 `json:"input_tokens"`
+	OutputTokens         int64                 `json:"output_tokens"`
+	CachedTokens         int64                 `json:"cached_tokens"`
+	CacheReadTokens      int64                 `json:"cache_read_tokens"`
+	CacheCreationTokens  int64                 `json:"cache_creation_tokens"`
+	TotalTokens          int64                 `json:"total_tokens"`
+	Cost                 float64               `json:"cost"`
+	AvgLatencyMS         *float64              `json:"average_latency_ms"`
+	LastSeenMS           int64                 `json:"last_seen_ms"`
+	Models               []AccountModelStatRow `json:"models,omitempty"`
+}
+
+type AccountModelStatRow struct {
+	Model               string  `json:"model"`
+	Calls               int64   `json:"calls"`
+	SuccessCalls        int64   `json:"success_calls"`
+	FailureCalls        int64   `json:"failure_calls"`
+	SuccessRate         float64 `json:"success_rate"`
+	InputTokens         int64   `json:"input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	CachedTokens        int64   `json:"cached_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	TotalTokens         int64   `json:"total_tokens"`
+	Cost                float64 `json:"cost"`
+	LastSeenMS          int64   `json:"last_seen_ms"`
+}
+
+type APIKeyStatRow struct {
+	ID                   string                `json:"id"`
+	APIKeyHash           string                `json:"api_key_hash"`
+	AccountSnapshot      string                `json:"account_snapshot,omitempty"`
+	AuthLabelSnapshot    string                `json:"auth_label_snapshot,omitempty"`
+	AuthProviderSnapshot string                `json:"auth_provider_snapshot,omitempty"`
+	AuthIndices          []string              `json:"auth_indices,omitempty"`
+	Sources              []string              `json:"sources,omitempty"`
+	SourceHashes         []string              `json:"source_hashes,omitempty"`
+	Calls                int64                 `json:"calls"`
+	SuccessCalls         int64                 `json:"success_calls"`
+	FailureCalls         int64                 `json:"failure_calls"`
+	SuccessRate          float64               `json:"success_rate"`
+	InputTokens          int64                 `json:"input_tokens"`
+	OutputTokens         int64                 `json:"output_tokens"`
+	CachedTokens         int64                 `json:"cached_tokens"`
+	CacheReadTokens      int64                 `json:"cache_read_tokens"`
+	CacheCreationTokens  int64                 `json:"cache_creation_tokens"`
+	TotalTokens          int64                 `json:"total_tokens"`
+	Cost                 float64               `json:"cost"`
+	AvgLatencyMS         *float64              `json:"average_latency_ms"`
+	LastSeenMS           int64                 `json:"last_seen_ms"`
+	Models               []AccountModelStatRow `json:"models,omitempty"`
+}
+
+type FilterOptions struct {
+	AccountStats []AccountStatRow  `json:"account_stats,omitempty"`
+	APIKeyStats  []APIKeyStatRow   `json:"api_key_stats,omitempty"`
+	ChannelShare []ChannelShareRow `json:"channel_share,omitempty"`
+	ModelStats   []ModelStat       `json:"model_stats,omitempty"`
 }
 
 type TaskBucketRow struct {
@@ -338,6 +417,27 @@ func (s *Service) Analytics(ctx context.Context, req Request) (Response, error) 
 		}
 		response.FailureSources = buildFailureSources(stats)
 	}
+	if req.Include.AccountStats {
+		stats, err := s.store.AccountModelStatsWithFilter(ctx, filter)
+		if err != nil {
+			return Response{}, err
+		}
+		response.AccountStats = buildAccountStats(stats, prices)
+	}
+	if req.Include.APIKeyStats {
+		stats, err := s.store.APIKeyModelStatsWithFilter(ctx, filter)
+		if err != nil {
+			return Response{}, err
+		}
+		response.APIKeyStats = buildAPIKeyStats(stats, prices)
+	}
+	if req.Include.FilterOptions {
+		options, err := s.filterOptions(ctx, filter, prices)
+		if err != nil {
+			return Response{}, err
+		}
+		response.FilterOptions = options
+	}
 	if req.Include.TaskBuckets {
 		response.TaskBuckets = buildTaskBuckets(taskBuckets)
 	}
@@ -381,6 +481,7 @@ func buildFilter(req Request) store.AnalyticsFilter {
 		SearchQuery:       req.SearchQuery,
 		SearchAPIKeyHash:  req.SearchAPIKeyHash,
 		Models:            req.Filters.Models,
+		Providers:         req.Filters.Providers,
 		Accounts:          req.Filters.Accounts,
 		AuthIndices:       req.Filters.AuthIndices,
 		APIKeyHashes:      req.Filters.APIKeyHashes,
@@ -389,6 +490,43 @@ func buildFilter(req Request) store.AnalyticsFilter {
 		FailedOnly:        req.Filters.FailedOnly,
 		ExcludeZeroTokens: req.Filters.ExcludeZeroTokens,
 	}
+}
+
+func (s *Service) filterOptions(ctx context.Context, filter store.AnalyticsFilter, prices map[string]store.ModelPrice) (*FilterOptions, error) {
+	optionFilter := filter
+	optionFilter.Models = nil
+	optionFilter.Providers = nil
+	optionFilter.Accounts = nil
+	optionFilter.AuthIndices = nil
+	optionFilter.APIKeyHashes = nil
+	optionFilter.SourceHashes = nil
+	optionFilter.IncludeFailed = true
+	optionFilter.FailedOnly = false
+	optionFilter.ExcludeZeroTokens = false
+
+	accountStats, err := s.store.AccountModelStatsWithFilter(ctx, optionFilter)
+	if err != nil {
+		return nil, err
+	}
+	apiKeyStats, err := s.store.APIKeyModelStatsWithFilter(ctx, optionFilter)
+	if err != nil {
+		return nil, err
+	}
+	channelStats, err := s.store.ChannelModelStatsWithFilter(ctx, optionFilter)
+	if err != nil {
+		return nil, err
+	}
+	modelStats, err := s.store.ModelStatsWithFilter(ctx, optionFilter, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	return &FilterOptions{
+		AccountStats: buildAccountStats(accountStats, prices),
+		APIKeyStats:  buildAPIKeyStats(apiKeyStats, prices),
+		ChannelShare: buildChannelShare(channelStats, prices),
+		ModelStats:   buildModelStats(modelStats, prices),
+	}, nil
 }
 
 func normalizeGranularity(input string, fromMS int64, toMS int64) string {
@@ -605,6 +743,183 @@ func buildFailureSources(stats []store.FailureSourceStat) []FailureSourceRow {
 	return result
 }
 
+type accountStatAccumulator struct {
+	row            AccountStatRow
+	authIndices    map[string]struct{}
+	sources        map[string]struct{}
+	sourceHashes   map[string]struct{}
+	models         map[string]*AccountModelStatRow
+	latencySum     float64
+	latencySamples int64
+}
+
+type apiKeyStatAccumulator struct {
+	row            APIKeyStatRow
+	authIndices    map[string]struct{}
+	sources        map[string]struct{}
+	sourceHashes   map[string]struct{}
+	models         map[string]*AccountModelStatRow
+	latencySum     float64
+	latencySamples int64
+}
+
+func buildAccountStats(stats []store.AccountModelStat, prices map[string]store.ModelPrice) []AccountStatRow {
+	grouped := map[string]*accountStatAccumulator{}
+	for _, stat := range stats {
+		id := accountGroupKey(stat.AccountSnapshot, stat.AuthLabelSnapshot, stat.Source, stat.AuthIndex)
+		entry := grouped[id]
+		if entry == nil {
+			entry = &accountStatAccumulator{
+				row: AccountStatRow{
+					ID:                   id,
+					AccountSnapshot:      stat.AccountSnapshot,
+					AuthLabelSnapshot:    stat.AuthLabelSnapshot,
+					AuthProviderSnapshot: stat.AuthProviderSnapshot,
+				},
+				authIndices:  map[string]struct{}{},
+				sources:      map[string]struct{}{},
+				sourceHashes: map[string]struct{}{},
+				models:       map[string]*AccountModelStatRow{},
+			}
+			grouped[id] = entry
+		}
+		fillAccountStatSnapshots(&entry.row, stat.AccountSnapshot, stat.AuthLabelSnapshot, stat.AuthProviderSnapshot)
+		addSetValue(entry.authIndices, stat.AuthIndex)
+		addSetValue(entry.sources, stat.Source)
+		addSetValue(entry.sourceHashes, stat.SourceHash)
+		cost := costForAccountModelStat(stat, prices)
+		addAccountTotals(
+			&entry.row.Calls,
+			&entry.row.SuccessCalls,
+			&entry.row.FailureCalls,
+			&entry.row.InputTokens,
+			&entry.row.OutputTokens,
+			&entry.row.CachedTokens,
+			&entry.row.CacheReadTokens,
+			&entry.row.CacheCreationTokens,
+			&entry.row.TotalTokens,
+			&entry.row.Cost,
+			stat.Calls,
+			stat.SuccessCalls,
+			stat.FailureCalls,
+			stat.InputTokens,
+			stat.OutputTokens,
+			stat.CachedTokens,
+			stat.CacheReadTokens,
+			stat.CacheCreationTokens,
+			stat.TotalTokens,
+			cost,
+		)
+		if stat.LastSeenMS > entry.row.LastSeenMS {
+			entry.row.LastSeenMS = stat.LastSeenMS
+		}
+		if stat.AvgLatencyMS.Valid && stat.LatencySamples > 0 {
+			entry.latencySum += stat.AvgLatencyMS.Float64 * float64(stat.LatencySamples)
+			entry.latencySamples += stat.LatencySamples
+		}
+		addAccountModelStat(entry.models, stat.Model, stat.Calls, stat.SuccessCalls, stat.FailureCalls, stat.InputTokens, stat.OutputTokens, stat.CachedTokens, stat.CacheReadTokens, stat.CacheCreationTokens, stat.TotalTokens, cost, stat.LastSeenMS)
+	}
+
+	result := make([]AccountStatRow, 0, len(grouped))
+	for _, entry := range grouped {
+		entry.row.SuccessRate = ratio(entry.row.SuccessCalls, entry.row.Calls)
+		entry.row.AuthIndices = sortedSetValues(entry.authIndices)
+		entry.row.Sources = sortedSetValues(entry.sources)
+		entry.row.SourceHashes = sortedSetValues(entry.sourceHashes)
+		entry.row.Models = sortedAccountModelStats(entry.models)
+		if entry.latencySamples > 0 {
+			value := entry.latencySum / float64(entry.latencySamples)
+			entry.row.AvgLatencyMS = &value
+		}
+		result = append(result, entry.row)
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].LastSeenMS > result[j].LastSeenMS ||
+			(result[i].LastSeenMS == result[j].LastSeenMS && result[i].Calls > result[j].Calls) ||
+			(result[i].LastSeenMS == result[j].LastSeenMS && result[i].Calls == result[j].Calls && result[i].Cost > result[j].Cost)
+	})
+	return result
+}
+
+func buildAPIKeyStats(stats []store.APIKeyModelStat, prices map[string]store.ModelPrice) []APIKeyStatRow {
+	grouped := map[string]*apiKeyStatAccumulator{}
+	for _, stat := range stats {
+		id := apiKeyGroupKey(stat.APIKeyHash, stat.SourceHash, stat.AuthIndex, stat.Source, stat.AuthProviderSnapshot)
+		entry := grouped[id]
+		if entry == nil {
+			entry = &apiKeyStatAccumulator{
+				row: APIKeyStatRow{
+					ID:                   id,
+					APIKeyHash:           stat.APIKeyHash,
+					AccountSnapshot:      stat.AccountSnapshot,
+					AuthLabelSnapshot:    stat.AuthLabelSnapshot,
+					AuthProviderSnapshot: stat.AuthProviderSnapshot,
+				},
+				authIndices:  map[string]struct{}{},
+				sources:      map[string]struct{}{},
+				sourceHashes: map[string]struct{}{},
+				models:       map[string]*AccountModelStatRow{},
+			}
+			grouped[id] = entry
+		}
+		fillAPIKeyStatSnapshots(&entry.row, stat.APIKeyHash, stat.AccountSnapshot, stat.AuthLabelSnapshot, stat.AuthProviderSnapshot)
+		addSetValue(entry.authIndices, stat.AuthIndex)
+		addSetValue(entry.sources, stat.Source)
+		addSetValue(entry.sourceHashes, stat.SourceHash)
+		cost := costForAPIKeyModelStat(stat, prices)
+		addAccountTotals(
+			&entry.row.Calls,
+			&entry.row.SuccessCalls,
+			&entry.row.FailureCalls,
+			&entry.row.InputTokens,
+			&entry.row.OutputTokens,
+			&entry.row.CachedTokens,
+			&entry.row.CacheReadTokens,
+			&entry.row.CacheCreationTokens,
+			&entry.row.TotalTokens,
+			&entry.row.Cost,
+			stat.Calls,
+			stat.SuccessCalls,
+			stat.FailureCalls,
+			stat.InputTokens,
+			stat.OutputTokens,
+			stat.CachedTokens,
+			stat.CacheReadTokens,
+			stat.CacheCreationTokens,
+			stat.TotalTokens,
+			cost,
+		)
+		if stat.LastSeenMS > entry.row.LastSeenMS {
+			entry.row.LastSeenMS = stat.LastSeenMS
+		}
+		if stat.AvgLatencyMS.Valid && stat.LatencySamples > 0 {
+			entry.latencySum += stat.AvgLatencyMS.Float64 * float64(stat.LatencySamples)
+			entry.latencySamples += stat.LatencySamples
+		}
+		addAccountModelStat(entry.models, stat.Model, stat.Calls, stat.SuccessCalls, stat.FailureCalls, stat.InputTokens, stat.OutputTokens, stat.CachedTokens, stat.CacheReadTokens, stat.CacheCreationTokens, stat.TotalTokens, cost, stat.LastSeenMS)
+	}
+
+	result := make([]APIKeyStatRow, 0, len(grouped))
+	for _, entry := range grouped {
+		entry.row.SuccessRate = ratio(entry.row.SuccessCalls, entry.row.Calls)
+		entry.row.AuthIndices = sortedSetValues(entry.authIndices)
+		entry.row.Sources = sortedSetValues(entry.sources)
+		entry.row.SourceHashes = sortedSetValues(entry.sourceHashes)
+		entry.row.Models = sortedAccountModelStats(entry.models)
+		if entry.latencySamples > 0 {
+			value := entry.latencySum / float64(entry.latencySamples)
+			entry.row.AvgLatencyMS = &value
+		}
+		result = append(result, entry.row)
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].LastSeenMS > result[j].LastSeenMS ||
+			(result[i].LastSeenMS == result[j].LastSeenMS && result[i].Calls > result[j].Calls) ||
+			(result[i].LastSeenMS == result[j].LastSeenMS && result[i].Calls == result[j].Calls && result[i].Cost > result[j].Cost)
+	})
+	return result
+}
+
 func fillChannelShareSnapshots(row *ChannelShareRow, stat store.ChannelModelStat) {
 	if row.Source == "" {
 		row.Source = stat.Source
@@ -618,6 +933,168 @@ func fillChannelShareSnapshots(row *ChannelShareRow, stat store.ChannelModelStat
 	if row.AuthProviderSnapshot == "" {
 		row.AuthProviderSnapshot = stat.AuthProviderSnapshot
 	}
+}
+
+func accountGroupKey(accountSnapshot, authLabelSnapshot, source, authIndex string) string {
+	if strings.TrimSpace(accountSnapshot) != "" {
+		return accountSnapshot
+	}
+	if strings.TrimSpace(authLabelSnapshot) != "" {
+		return authLabelSnapshot
+	}
+	if strings.TrimSpace(source) != "" {
+		return source
+	}
+	if strings.TrimSpace(authIndex) != "" {
+		return authIndex
+	}
+	return "-"
+}
+
+func apiKeyGroupKey(apiKeyHash, sourceHash, authIndex, source, provider string) string {
+	if strings.TrimSpace(apiKeyHash) != "" {
+		return strings.ToLower(strings.TrimSpace(apiKeyHash))
+	}
+	parts := []string{"unknown-client-api-key"}
+	for _, value := range []string{sourceHash, authIndex, source, provider} {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			trimmed = "-"
+		}
+		parts = append(parts, trimmed)
+	}
+	return strings.Join(parts, ":")
+}
+
+func fillAccountStatSnapshots(row *AccountStatRow, accountSnapshot, authLabelSnapshot, authProviderSnapshot string) {
+	if row.AccountSnapshot == "" {
+		row.AccountSnapshot = accountSnapshot
+	}
+	if row.AuthLabelSnapshot == "" {
+		row.AuthLabelSnapshot = authLabelSnapshot
+	}
+	if row.AuthProviderSnapshot == "" {
+		row.AuthProviderSnapshot = authProviderSnapshot
+	}
+}
+
+func fillAPIKeyStatSnapshots(row *APIKeyStatRow, apiKeyHash, accountSnapshot, authLabelSnapshot, authProviderSnapshot string) {
+	if row.APIKeyHash == "" {
+		row.APIKeyHash = apiKeyHash
+	}
+	if row.AccountSnapshot == "" {
+		row.AccountSnapshot = accountSnapshot
+	}
+	if row.AuthLabelSnapshot == "" {
+		row.AuthLabelSnapshot = authLabelSnapshot
+	}
+	if row.AuthProviderSnapshot == "" {
+		row.AuthProviderSnapshot = authProviderSnapshot
+	}
+}
+
+func addSetValue(values map[string]struct{}, value string) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return
+	}
+	values[trimmed] = struct{}{}
+}
+
+func sortedSetValues(values map[string]struct{}) []string {
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func addAccountTotals(
+	calls *int64,
+	successCalls *int64,
+	failureCalls *int64,
+	inputTokens *int64,
+	outputTokens *int64,
+	cachedTokens *int64,
+	cacheReadTokens *int64,
+	cacheCreationTokens *int64,
+	totalTokens *int64,
+	cost *float64,
+	addCalls int64,
+	addSuccessCalls int64,
+	addFailureCalls int64,
+	addInputTokens int64,
+	addOutputTokens int64,
+	addCachedTokens int64,
+	addCacheReadTokens int64,
+	addCacheCreationTokens int64,
+	addTotalTokens int64,
+	addCost float64,
+) {
+	*calls += addCalls
+	*successCalls += addSuccessCalls
+	*failureCalls += addFailureCalls
+	*inputTokens += addInputTokens
+	*outputTokens += addOutputTokens
+	*cachedTokens += addCachedTokens
+	*cacheReadTokens += addCacheReadTokens
+	*cacheCreationTokens += addCacheCreationTokens
+	*totalTokens += addTotalTokens
+	*cost += addCost
+}
+
+func addAccountModelStat(
+	models map[string]*AccountModelStatRow,
+	model string,
+	calls int64,
+	successCalls int64,
+	failureCalls int64,
+	inputTokens int64,
+	outputTokens int64,
+	cachedTokens int64,
+	cacheReadTokens int64,
+	cacheCreationTokens int64,
+	totalTokens int64,
+	cost float64,
+	lastSeenMS int64,
+) {
+	modelKey := model
+	if strings.TrimSpace(modelKey) == "" {
+		modelKey = "-"
+	}
+	entry := models[modelKey]
+	if entry == nil {
+		entry = &AccountModelStatRow{Model: modelKey}
+		models[modelKey] = entry
+	}
+	entry.Calls += calls
+	entry.SuccessCalls += successCalls
+	entry.FailureCalls += failureCalls
+	entry.InputTokens += inputTokens
+	entry.OutputTokens += outputTokens
+	entry.CachedTokens += cachedTokens
+	entry.CacheReadTokens += cacheReadTokens
+	entry.CacheCreationTokens += cacheCreationTokens
+	entry.TotalTokens += totalTokens
+	entry.Cost += cost
+	if lastSeenMS > entry.LastSeenMS {
+		entry.LastSeenMS = lastSeenMS
+	}
+	entry.SuccessRate = ratio(entry.SuccessCalls, entry.Calls)
+}
+
+func sortedAccountModelStats(models map[string]*AccountModelStatRow) []AccountModelStatRow {
+	result := make([]AccountModelStatRow, 0, len(models))
+	for _, model := range models {
+		result = append(result, *model)
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].Cost > result[j].Cost ||
+			(result[i].Cost == result[j].Cost && result[i].Calls > result[j].Calls) ||
+			(result[i].Cost == result[j].Cost && result[i].Calls == result[j].Calls && result[i].LastSeenMS > result[j].LastSeenMS)
+	})
+	return result
 }
 
 func buildTaskBuckets(buckets []store.TaskBucket) []TaskBucketRow {
@@ -731,6 +1208,34 @@ func costForStat(stat store.ModelStat, prices map[string]store.ModelPrice) float
 }
 
 func costForChannelStat(stat store.ChannelModelStat, prices map[string]store.ModelPrice) float64 {
+	model := stat.BillingModel
+	if model == "" {
+		model = stat.Model
+	}
+	return pricing.CostForModel(model, pricing.ModelTokens{
+		InputTokens:         stat.InputTokens,
+		OutputTokens:        stat.OutputTokens,
+		CachedTokens:        stat.CachedTokens,
+		CacheReadTokens:     stat.CacheReadTokens,
+		CacheCreationTokens: stat.CacheCreationTokens,
+	}, prices)
+}
+
+func costForAccountModelStat(stat store.AccountModelStat, prices map[string]store.ModelPrice) float64 {
+	model := stat.BillingModel
+	if model == "" {
+		model = stat.Model
+	}
+	return pricing.CostForModel(model, pricing.ModelTokens{
+		InputTokens:         stat.InputTokens,
+		OutputTokens:        stat.OutputTokens,
+		CachedTokens:        stat.CachedTokens,
+		CacheReadTokens:     stat.CacheReadTokens,
+		CacheCreationTokens: stat.CacheCreationTokens,
+	}, prices)
+}
+
+func costForAPIKeyModelStat(stat store.APIKeyModelStat, prices map[string]store.ModelPrice) float64 {
 	model := stat.BillingModel
 	if model == "" {
 		model = stat.Model

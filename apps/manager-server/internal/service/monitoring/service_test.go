@@ -345,6 +345,59 @@ func TestAnalyticsAppliesFilters(t *testing.T) {
 	}
 }
 
+func TestAnalyticsAccountAndAPIKeyStatsUseFullFilteredScope(t *testing.T) {
+	db := newMonitoringTestStore(t)
+	ctx := context.Background()
+	fromMS := int64(1_778_050_000_000)
+	toMS := fromMS + 60*60*1000
+
+	events := []usage.Event{
+		monitoringEvent("scope-a", fromMS+1_000, "gpt-a", "auth-1", "source-a", false, 10, 5, 0, 0, 15, nil),
+		monitoringEvent("scope-b", fromMS+2_000, "gpt-a", "auth-1", "source-a", false, 20, 6, 0, 0, 26, nil),
+		monitoringEvent("scope-c", fromMS+3_000, "gpt-b", "auth-1", "source-a", true, 1, 1, 0, 0, 2, nil),
+	}
+	for index := range events {
+		events[index].AccountSnapshot = "team@example.com"
+		events[index].AuthLabelSnapshot = "Team Account"
+		events[index].APIKeyHash = "client-key-hash"
+	}
+	if _, err := db.InsertEvents(ctx, events); err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	resp, err := New(db).Analytics(ctx, Request{
+		FromMS: fromMS,
+		ToMS:   toMS,
+		Include: Include{
+			Summary:      true,
+			AccountStats: true,
+			APIKeyStats:  true,
+			EventsPage:   &EventsPage{Limit: 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("analytics: %v", err)
+	}
+	if resp.Events == nil || len(resp.Events.Items) != 1 || !resp.Events.HasMore {
+		t.Fatalf("events page = %#v", resp.Events)
+	}
+	if resp.Summary == nil || resp.Summary.TotalCalls != 3 || resp.Summary.FailureCalls != 1 {
+		t.Fatalf("summary = %#v", resp.Summary)
+	}
+	if len(resp.AccountStats) != 1 || resp.AccountStats[0].Calls != 3 ||
+		resp.AccountStats[0].FailureCalls != 1 || resp.AccountStats[0].TotalTokens != 43 {
+		t.Fatalf("account stats = %#v", resp.AccountStats)
+	}
+	if len(resp.AccountStats[0].Models) != 2 {
+		t.Fatalf("account model stats = %#v", resp.AccountStats[0].Models)
+	}
+	if len(resp.APIKeyStats) != 1 || resp.APIKeyStats[0].APIKeyHash != "client-key-hash" ||
+		resp.APIKeyStats[0].Calls != 3 || resp.APIKeyStats[0].FailureCalls != 1 ||
+		resp.APIKeyStats[0].TotalTokens != 43 {
+		t.Fatalf("api key stats = %#v", resp.APIKeyStats)
+	}
+}
+
 func TestAnalyticsSearchMatchesResolvedModelAndProjectID(t *testing.T) {
 	db := newMonitoringTestStore(t)
 	ctx := context.Background()
@@ -499,6 +552,62 @@ func TestAnalyticsAppliesAccountFallbackFilter(t *testing.T) {
 	}
 	if resp.Events == nil || len(resp.Events.Items) != 1 || resp.Events.Items[0].EventHash != "account-alice" {
 		t.Fatalf("auth label events = %#v", resp.Events)
+	}
+}
+
+func TestAnalyticsFilterOptionsIgnoreActiveScopeFilters(t *testing.T) {
+	db := newMonitoringTestStore(t)
+	ctx := context.Background()
+	fromMS := int64(1_778_300_000_000)
+	toMS := fromMS + 60*60*1000
+
+	alice := monitoringEvent("option-alice", fromMS+1_000, "gpt-a", "auth-a", "source-a", false, 10, 5, 0, 0, 15, nil)
+	alice.AccountSnapshot = "alice@example.com"
+	alice.AuthLabelSnapshot = "Alice Auth"
+	alice.AuthProviderSnapshot = "codex"
+	alice.APIKeyHash = "key-alice"
+	bob := monitoringEvent("option-bob", fromMS+2_000, "gpt-b", "auth-b", "source-b", false, 10, 5, 0, 0, 15, nil)
+	bob.AccountSnapshot = "bob@example.com"
+	bob.AuthLabelSnapshot = "Bob Auth"
+	bob.AuthProviderSnapshot = "gemini"
+	bob.APIKeyHash = "key-bob"
+
+	if _, err := db.InsertEvents(ctx, []usage.Event{alice, bob}); err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	resp, err := New(db).Analytics(ctx, Request{
+		FromMS: fromMS,
+		ToMS:   toMS,
+		Filters: Filters{
+			Models:   []string{"gpt-a"},
+			Accounts: []string{"alice@example.com"},
+		},
+		Include: Include{
+			Summary:       true,
+			FilterOptions: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("analytics: %v", err)
+	}
+	if resp.Summary == nil || resp.Summary.TotalCalls != 1 {
+		t.Fatalf("summary should respect active filters: %#v", resp.Summary)
+	}
+	if resp.FilterOptions == nil {
+		t.Fatal("filter options are nil")
+	}
+	if len(resp.FilterOptions.AccountStats) != 2 {
+		t.Fatalf("account filter options should ignore active account/model filters: %#v", resp.FilterOptions.AccountStats)
+	}
+	if len(resp.FilterOptions.APIKeyStats) != 2 {
+		t.Fatalf("api key filter options should ignore active account/model filters: %#v", resp.FilterOptions.APIKeyStats)
+	}
+	if len(resp.FilterOptions.ModelStats) != 2 {
+		t.Fatalf("model filter options should ignore active account/model filters: %#v", resp.FilterOptions.ModelStats)
+	}
+	if len(resp.FilterOptions.ChannelShare) != 2 {
+		t.Fatalf("channel/provider filter options should ignore active account/model filters: %#v", resp.FilterOptions.ChannelShare)
 	}
 }
 
