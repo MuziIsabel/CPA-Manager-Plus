@@ -84,6 +84,43 @@ describe('resolveManagerCPAConnection', () => {
     });
   });
 
+  it('updates the embedded CPA URL when a new URL is submitted', () => {
+    expect(
+      resolveManagerCPAConnection({
+        panelHostedByUsageService: true,
+        managerConfig: buildManagerConfig({
+          cpaConnection: {
+            cpaBaseUrl: 'http://saved-cpa.local:8317',
+            managementKey: 'old-cpa-key',
+          },
+        }),
+        cpaBaseUrlInput: ' http://next-cpa.local:9009 ',
+      })
+    ).toEqual({
+      cpaBaseUrl: 'http://next-cpa.local:9009',
+      managementKey: 'old-cpa-key',
+    });
+  });
+
+  it('updates both embedded CPA URL and key when both are submitted', () => {
+    expect(
+      resolveManagerCPAConnection({
+        panelHostedByUsageService: true,
+        managerConfig: buildManagerConfig({
+          cpaConnection: {
+            cpaBaseUrl: 'http://saved-cpa.local:8317',
+            managementKey: 'old-cpa-key',
+          },
+        }),
+        cpaBaseUrlInput: ' http://next-cpa.local:9009 ',
+        managementKeyInput: ' next-cpa-key ',
+      })
+    ).toEqual({
+      cpaBaseUrl: 'http://next-cpa.local:9009',
+      managementKey: 'next-cpa-key',
+    });
+  });
+
   it('returns an empty connection when embedded Manager config is not loaded yet', () => {
     expect(
       resolveManagerCPAConnection({

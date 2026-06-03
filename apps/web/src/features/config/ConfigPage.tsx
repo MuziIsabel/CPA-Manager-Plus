@@ -106,19 +106,23 @@ export function resolveManagerSaveState({
 export function resolveManagerCPAConnection({
   panelHostedByUsageService,
   managerConfig,
+  cpaBaseUrlInput,
   managementKeyInput = '',
 }: {
   panelHostedByUsageService: boolean | null;
   managerConfig: ManagerConfig | null;
+  cpaBaseUrlInput?: string;
   managementKeyInput?: string;
 }): ManagerConfig['cpaConnection'] {
   const savedConnection = managerConfig?.cpaConnection;
+  const nextCPABaseUrl =
+    cpaBaseUrlInput === undefined ? savedConnection?.cpaBaseUrl || '' : cpaBaseUrlInput.trim();
   const nextManagementKey = managementKeyInput.trim() || savedConnection?.managementKey || '';
 
   if (panelHostedByUsageService === true) {
     return {
       ...(savedConnection ?? {}),
-      cpaBaseUrl: savedConnection?.cpaBaseUrl || '',
+      cpaBaseUrl: nextCPABaseUrl,
       managementKey: nextManagementKey,
     };
   }
@@ -197,6 +201,7 @@ export function ConfigPage() {
   const [managerError, setManagerError] = useState('');
   const [managerDirty, setManagerDirty] = useState(false);
   const [managerRequestMonitoringEnabled, setManagerRequestMonitoringEnabled] = useState(true);
+  const [managerCPABaseInput, setManagerCPABaseInput] = useState('');
   const [managerCPAManagementKeyInput, setManagerCPAManagementKeyInput] = useState('');
   const [managerCPAManagementKeyVisible, setManagerCPAManagementKeyVisible] = useState(false);
   const [panelHostedByUsageService, setPanelHostedByUsageService] = useState<boolean | null>(null);
@@ -368,6 +373,7 @@ export function ConfigPage() {
       setManagerConfigSource(response.source || '');
       setManagerCPAUsage(response.cpaUsage ?? null);
       setManagerRequestMonitoringEnabled(collector.enabled !== false);
+      setManagerCPABaseInput(nextConfig.cpaConnection?.cpaBaseUrl || '');
       setManagerCollectorMode(collector.collectorMode || MANAGER_COLLECTOR_DEFAULT.collectorMode);
       setManagerPollIntervalMs(String(collector.pollIntervalMs || MANAGER_COLLECTOR_DEFAULT.pollIntervalMs));
       setManagerBatchSize(String(collector.batchSize || MANAGER_COLLECTOR_DEFAULT.batchSize));
@@ -390,6 +396,7 @@ export function ConfigPage() {
       setManagerConfig(null);
       setManagerCPAUsage(null);
       setManagerConfigSource('');
+      setManagerCPABaseInput('');
       return;
     }
     if (!requestAuthKey) {
@@ -512,6 +519,29 @@ export function ConfigPage() {
     }
   };
 
+  const saveManagerConfigPayload = useCallback(
+    async (serviceBase: string, nextConfig: ManagerConfig, requestAuthKey: string) => {
+      const response = await usageServiceApi.saveManagerConfig(
+        serviceBase,
+        nextConfig,
+        requestAuthKey
+      );
+      applyManagerConfigResponse(response);
+      setUsageServiceConfig(
+        {
+          enabled: true,
+          serviceBase,
+        },
+        {
+          panelBase: detectedPanelBase,
+          panelHostMode: 'manager_embedded',
+        }
+      );
+      showNotification(t('config_management.manager.save_success'), 'success');
+    },
+    [applyManagerConfigResponse, detectedPanelBase, setUsageServiceConfig, showNotification, t]
+  );
+
   const handleManagerSave = async () => {
     if (disableControls) return;
     if (panelHostedByUsageService !== true) return;
@@ -528,7 +558,6 @@ export function ConfigPage() {
       showNotification(t('config_management.manager.admin_key_required'), 'warning');
       return;
     }
-    setManagerSaving(true);
     try {
       const pollIntervalMs = managerRequestMonitoringEnabled
         ? readManagerPositiveInteger(
@@ -555,6 +584,7 @@ export function ConfigPage() {
       const cpaConnection = resolveManagerCPAConnection({
         panelHostedByUsageService,
         managerConfig,
+        cpaBaseUrlInput: managerCPABaseInput,
         managementKeyInput: managerCPAManagementKeyInput,
       });
       const nextConfig: ManagerConfig = {
@@ -580,31 +610,52 @@ export function ConfigPage() {
           serviceBase: '',
         },
       };
-      const response = await usageServiceApi.saveManagerConfig(
-        serviceBase,
-        nextConfig,
-        requestAuthKey
-      );
-      applyManagerConfigResponse(response);
-      setUsageServiceConfig(
-        {
-          enabled: true,
-          serviceBase,
-        },
-        {
-          panelBase: detectedPanelBase,
-          panelHostMode: 'manager_embedded',
+      const savedCPABase = normalizeUsageServiceBase(managerConfig?.cpaConnection?.cpaBaseUrl || '');
+      const nextCPABase = normalizeUsageServiceBase(cpaConnection.cpaBaseUrl || '');
+      const cpaConnectionChanged =
+        savedCPABase !== nextCPABase || managerCPAManagementKeyInput.trim() !== '';
+
+      const runSave = async (notifyOnError: boolean) => {
+        setManagerSaving(true);
+        try {
+          await saveManagerConfigPayload(serviceBase, nextConfig, requestAuthKey);
+        } catch (error: unknown) {
+          if (notifyOnError) {
+            const message = getUsageServiceDisplayError(error, 'usage_service_errors.request_failed');
+            showNotification(
+              `${t('notification.save_failed')}${message ? `: ${message}` : ''}`,
+              'error'
+            );
+          }
+          throw error;
+        } finally {
+          setManagerSaving(false);
         }
-      );
-      showNotification(t('config_management.manager.save_success'), 'success');
+      };
+
+      if (cpaConnectionChanged) {
+        showConfirmation({
+          title: t('config_management.manager.cpa_connection_risk_title'),
+          message: t('config_management.manager.cpa_connection_risk_message', {
+            currentBase: savedCPABase || t('config_management.manager.not_bound'),
+            nextBase: nextCPABase || t('config_management.manager.not_bound'),
+          }),
+          confirmText: t('config_management.manager.cpa_connection_risk_confirm'),
+          cancelText: t('common.cancel'),
+          variant: 'danger',
+          onConfirm: () => runSave(true),
+        });
+        return;
+      }
+
+      await runSave(false);
     } catch (error: unknown) {
+      setManagerSaving(false);
       const message = getUsageServiceDisplayError(error, 'usage_service_errors.request_failed');
       showNotification(
         `${t('notification.save_failed')}${message ? `: ${message}` : ''}`,
         'error'
       );
-    } finally {
-      setManagerSaving(false);
     }
   };
 
@@ -1020,7 +1071,11 @@ export function ConfigPage() {
 
   const canConfigureRequestMonitoring =
     panelHostedByUsageService === true &&
-    Boolean(managerServiceTarget && managerConfig?.cpaConnection?.managementKey);
+    Boolean(
+      managerServiceTarget &&
+        managerCPABaseInput.trim() &&
+        (managerCPAManagementKeyInput.trim() || managerConfig?.cpaConnection?.managementKey)
+    );
   const managerRuntimeModeLabel =
     panelHostedByUsageService === true
       ? t('config_management.manager.runtime_embedded')
@@ -1082,6 +1137,7 @@ export function ConfigPage() {
               managerHasBoundCPAManagementKey={Boolean(
                 managerConfig?.cpaConnection?.managementKey
               )}
+              managerCPABaseInput={managerCPABaseInput}
               managerCPAManagementKeyInput={managerCPAManagementKeyInput}
               managerCPAManagementKeyVisible={managerCPAManagementKeyVisible}
               managerBoundCPABase={managerBoundCPABase}
@@ -1099,6 +1155,10 @@ export function ConfigPage() {
               onRefresh={() => void loadManagerConfig()}
               onRequestMonitoringChange={(value) => {
                 setManagerRequestMonitoringEnabled(value);
+                setManagerFieldDirty();
+              }}
+              onCPABaseInputChange={(value) => {
+                setManagerCPABaseInput(value);
                 setManagerFieldDirty();
               }}
               onCPAManagementKeyInputChange={(value) => {

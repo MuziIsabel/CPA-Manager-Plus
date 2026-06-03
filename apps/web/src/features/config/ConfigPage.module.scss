@@ -402,6 +402,30 @@
   color: var(--warning-text);
 }
 
+.managerConnectionGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+
+  :global(.form-group) {
+    margin-bottom: 0;
+  }
+
+  @include mobile {
+    grid-template-columns: 1fr;
+  }
+}
+
+.managerConnectionRiskNote {
+  padding: 10px 12px;
+  border: 1px solid var(--failure-badge-border);
+  border-radius: 8px;
+  background: var(--failure-badge-bg);
+  color: var(--failure-badge-text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .managerCpaKeyInput {
   &:global(.input.input-with-right-element) {
     padding-right: 72px;
