@@ -83,6 +83,30 @@ describe('auth file Codex status helpers', () => {
     expect(status.badges.map((badge) => badge.kind)).toContain('five_hour_limited');
   });
 
+  it('detects monthly-limited Codex quota without treating it as weekly-limited', () => {
+    const status = getAuthFileCodexStatus(
+      codexFile(),
+      codexQuota({
+        windows: [
+          {
+            id: 'monthly',
+            label: 'Monthly limit',
+            usedPercent: 100,
+            resetLabel: '06/30 12:00',
+            limitWindowSeconds: 2_592_000,
+          },
+        ],
+      })
+    );
+
+    expect(status.isMonthlyLimited).toBe(true);
+    expect(status.isWeeklyLimited).toBe(false);
+    expect(status.monthlyResetLabel).toBe('06/30 12:00');
+    expect(authFileMatchesCodexStatusFilter(status, 'monthly_limited')).toBe(true);
+    expect(authFileMatchesCodexStatusFilter(status, 'weekly_limited')).toBe(false);
+    expect(status.badges.map((badge) => badge.kind)).toContain('monthly_limited');
+  });
+
   it('detects disabled Codex files with a known quota recovery label', () => {
     const status = getAuthFileCodexStatus(codexFile({ disabled: true }), codexQuota());
 
@@ -122,6 +146,29 @@ describe('auth file Codex status helpers', () => {
     expect(status.recoveryResetLabel).toBe('06/01 17:00');
     expect(status.badges.find((badge) => badge.kind === 'disabled_with_reset')).toMatchObject({
       labelParams: { reset: '06/01 17:00' },
+    });
+  });
+
+  it('uses the monthly reset label for disabled files when the monthly window is full', () => {
+    const status = getAuthFileCodexStatus(
+      codexFile({ disabled: true }),
+      codexQuota({
+        windows: [
+          {
+            id: 'monthly',
+            label: 'Monthly limit',
+            usedPercent: 100,
+            resetLabel: '06/30 12:00',
+            limitWindowSeconds: 2_592_000,
+          },
+        ],
+      })
+    );
+
+    expect(status.hasDisabledRecoveryReset).toBe(true);
+    expect(status.recoveryResetLabel).toBe('06/30 12:00');
+    expect(status.badges.find((badge) => badge.kind === 'disabled_with_reset')).toMatchObject({
+      labelParams: { reset: '06/30 12:00' },
     });
   });
 
@@ -184,6 +231,22 @@ describe('auth file Codex status helpers', () => {
     expect(authFileMatchesCodexStatusFilter(status, 'weekly_limited')).toBe(false);
   });
 
+  it('does not mark legacy quota inspections as monthly-limited without a monthly window', () => {
+    const status = getAuthFileCodexStatus(codexFile(), undefined, {
+      fileName: 'codex-main.json',
+      authIndex: 'codex-main',
+      statusCode: 402,
+      action: 'disable',
+      usedPercent: 100,
+      isQuota: true,
+    });
+
+    expect(status.isWeeklyLimited).toBe(true);
+    expect(status.isMonthlyLimited).toBe(false);
+    expect(authFileMatchesCodexStatusFilter(status, 'weekly_limited')).toBe(true);
+    expect(authFileMatchesCodexStatusFilter(status, 'monthly_limited')).toBe(false);
+  });
+
   it('ignores non-Codex files for Codex-only status filters', () => {
     const status = getAuthFileCodexStatus({ name: 'qwen.json', type: 'qwen' }, codexQuota());
 
@@ -224,6 +287,7 @@ describe('auth file Codex status helpers', () => {
     ).toContain('auth_files.codex_status_badge_reauth');
     expect(normalizeAuthFilesCodexStatusFilter('http_401')).toBe('reauth');
     expect(normalizeAuthFilesCodexStatusFilter('five_hour_limited')).toBe('five_hour_limited');
+    expect(normalizeAuthFilesCodexStatusFilter('monthly_limited')).toBe('monthly_limited');
     expect(normalizeAuthFilesCodexStatusFilter('disabled_with_reset')).toBe('disabled_with_reset');
     expect(normalizeAuthFilesCodexStatusFilter('unknown')).toBeNull();
   });

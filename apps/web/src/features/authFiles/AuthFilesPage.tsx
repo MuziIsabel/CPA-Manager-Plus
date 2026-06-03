@@ -477,6 +477,7 @@ export function AuthFilesPage() {
         label: t('auth_files.codex_status_filter_five_hour_limited'),
       },
       { value: 'weekly_limited', label: t('auth_files.codex_status_filter_weekly_limited') },
+      { value: 'monthly_limited', label: t('auth_files.codex_status_filter_monthly_limited') },
       {
         value: 'disabled_with_reset',
         label: t('auth_files.codex_status_filter_disabled_with_reset'),

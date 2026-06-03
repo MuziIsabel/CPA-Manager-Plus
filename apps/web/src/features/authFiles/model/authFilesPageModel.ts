@@ -29,6 +29,7 @@ export const buildWildcardSearch = (value: string): RegExp | null => {
 const PREMIUM_CODEX_PLAN_TYPES = new Set(['pro', 'prolite', 'pro-lite', 'pro_lite']);
 const CODEX_FIVE_HOUR_WINDOW_SECONDS = 18_000;
 const CODEX_WEEKLY_WINDOW_SECONDS = 604_800;
+const CODEX_MONTHLY_WINDOW_SECONDS = 2_592_000;
 const UNKNOWN_AUTH_INDEX_KEY = '-';
 
 export const AUTH_FILES_CODEX_STATUS_FILTERS = [
@@ -38,6 +39,7 @@ export const AUTH_FILES_CODEX_STATUS_FILTERS = [
   'reauth',
   'five_hour_limited',
   'weekly_limited',
+  'monthly_limited',
   'disabled_with_reset',
 ] as const;
 
@@ -47,6 +49,7 @@ export type AuthFileCodexStatusBadgeKind =
   | 'reauth'
   | 'five_hour_limited'
   | 'weekly_limited'
+  | 'monthly_limited'
   | 'disabled_with_reset';
 
 export type AuthFileCodexStatusBadge = {
@@ -65,12 +68,15 @@ export type AuthFileCodexStatusSummary = {
   needsReauth: boolean;
   isFiveHourLimited: boolean;
   isWeeklyLimited: boolean;
+  isMonthlyLimited: boolean;
   hasDisabledRecoveryReset: boolean;
   fiveHourResetLabel: string | null;
   weeklyResetLabel: string | null;
+  monthlyResetLabel: string | null;
   recoveryResetLabel: string | null;
   fiveHourUsedPercent: number | null;
   weeklyUsedPercent: number | null;
+  monthlyUsedPercent: number | null;
   badges: AuthFileCodexStatusBadge[];
 };
 
@@ -143,6 +149,13 @@ const findCodexWeeklyQuotaWindow = (quota?: CodexQuotaState) =>
     CODEX_WEEKLY_WINDOW_SECONDS
   );
 
+const findCodexMonthlyQuotaWindow = (quota?: CodexQuotaState) =>
+  findCodexQuotaWindow(
+    quota,
+    (window) => window.id === 'monthly' || window.labelKey === 'codex_quota.monthly_window',
+    CODEX_MONTHLY_WINDOW_SECONDS
+  );
+
 export const normalizeAuthFilesCodexStatusFilter = (
   value: unknown
 ): AuthFilesCodexStatusFilter | null => {
@@ -182,28 +195,40 @@ export const getAuthFileCodexStatus = (
       needsReauth: false,
       isFiveHourLimited: false,
       isWeeklyLimited: false,
+      isMonthlyLimited: false,
       hasDisabledRecoveryReset: false,
       fiveHourResetLabel: null,
       weeklyResetLabel: null,
+      monthlyResetLabel: null,
       recoveryResetLabel: null,
       fiveHourUsedPercent: null,
       weeklyUsedPercent: null,
+      monthlyUsedPercent: null,
       badges: [],
     };
   }
 
   const fiveHourWindow = findCodexFiveHourQuotaWindow(quota);
   const weeklyWindow = findCodexWeeklyQuotaWindow(quota);
+  const monthlyWindow = findCodexMonthlyQuotaWindow(quota);
   const fiveHourUsedPercent = normalizeNumber(fiveHourWindow?.usedPercent);
   const weeklyWindowUsedPercent = normalizeNumber(weeklyWindow?.usedPercent);
+  const monthlyWindowUsedPercent = normalizeNumber(monthlyWindow?.usedPercent);
   const inspectionUsedPercent =
     inspection?.isQuota === true ? normalizeNumber(inspection?.usedPercent) : null;
-  const weeklyUsedPercent = weeklyWindowUsedPercent ?? inspectionUsedPercent;
+  const monthlyUsedPercent =
+    monthlyWindowUsedPercent ?? (monthlyWindow ? inspectionUsedPercent : null);
+  const longWindowUsedPercent = weeklyWindowUsedPercent ?? monthlyUsedPercent;
+  const weeklyUsedPercent =
+    weeklyWindowUsedPercent ?? (!monthlyWindow ? inspectionUsedPercent : null);
   const fiveHourResetLabel = isKnownResetLabel(fiveHourWindow?.resetLabel)
     ? fiveHourWindow.resetLabel.trim()
     : null;
   const weeklyResetLabel = isKnownResetLabel(weeklyWindow?.resetLabel)
     ? weeklyWindow.resetLabel.trim()
+    : null;
+  const monthlyResetLabel = isKnownResetLabel(monthlyWindow?.resetLabel)
+    ? monthlyWindow.resetLabel.trim()
     : null;
   const statusCode =
     normalizeNumber(inspection?.statusCode) ??
@@ -217,17 +242,20 @@ export const getAuthFileCodexStatus = (
   const inspectionReachedQuota =
     inspection?.isQuota === true &&
     (action === 'disable' ||
-      (weeklyUsedPercent !== null && weeklyUsedPercent >= 100) ||
+      (longWindowUsedPercent !== null && longWindowUsedPercent >= 100) ||
       (file.disabled === true && action === 'keep'));
   const isWeeklyLimited =
-    (weeklyUsedPercent !== null && weeklyUsedPercent >= 100) || inspectionReachedQuota;
+    (weeklyUsedPercent !== null && weeklyUsedPercent >= 100) ||
+    (inspectionReachedQuota && !monthlyWindow);
+  const isMonthlyLimited =
+    (monthlyUsedPercent !== null && monthlyUsedPercent >= 100) ||
+    (inspectionReachedQuota && monthlyWindow !== null && !weeklyWindow);
   const isFiveHourLimited = fiveHourUsedPercent !== null && fiveHourUsedPercent >= 100;
   const recoveryResetLabel =
-    isWeeklyLimited && weeklyResetLabel
-      ? weeklyResetLabel
-      : isFiveHourLimited && fiveHourResetLabel
-        ? fiveHourResetLabel
-        : null;
+    (isMonthlyLimited && monthlyResetLabel) ||
+    (isWeeklyLimited && weeklyResetLabel) ||
+    (isFiveHourLimited && fiveHourResetLabel) ||
+    null;
   const hasDisabledRecoveryReset = file.disabled === true && recoveryResetLabel !== null;
   const badges: AuthFileCodexStatusBadge[] = [];
 
@@ -264,6 +292,17 @@ export const getAuthFileCodexStatus = (
     });
   }
 
+  if (isMonthlyLimited) {
+    badges.push({
+      kind: 'monthly_limited',
+      tone: 'warning',
+      labelKey: 'auth_files.codex_status_badge_monthly_limited',
+      defaultLabel: 'Monthly quota full',
+      titleKey: 'auth_files.codex_status_badge_monthly_limited_title',
+      defaultTitle: 'The Codex monthly quota window is at or above the limit.',
+    });
+  }
+
   if (hasDisabledRecoveryReset && recoveryResetLabel) {
     badges.push({
       kind: 'disabled_with_reset',
@@ -282,12 +321,15 @@ export const getAuthFileCodexStatus = (
     needsReauth,
     isFiveHourLimited,
     isWeeklyLimited,
+    isMonthlyLimited,
     hasDisabledRecoveryReset,
     fiveHourResetLabel,
     weeklyResetLabel,
+    monthlyResetLabel,
     recoveryResetLabel,
     fiveHourUsedPercent,
     weeklyUsedPercent,
+    monthlyUsedPercent,
     badges,
   };
 };
@@ -302,6 +344,7 @@ export const authFileMatchesCodexStatusFilter = (
   if (filter === 'reauth') return status.needsReauth || status.isHttp401;
   if (filter === 'five_hour_limited') return status.isFiveHourLimited;
   if (filter === 'weekly_limited') return status.isWeeklyLimited;
+  if (filter === 'monthly_limited') return status.isMonthlyLimited;
   if (filter === 'disabled_with_reset') return status.hasDisabledRecoveryReset;
   return true;
 };
