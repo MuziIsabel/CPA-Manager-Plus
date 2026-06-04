@@ -124,6 +124,28 @@ const readDetailString = (value: unknown): string | undefined => {
   return text || undefined;
 };
 
+const isModelFamily = (modelName: string, family: string): boolean =>
+  modelName === family || modelName.startsWith(`${family}-`);
+
+export function getServiceTierMultiplier(modelName: string, serviceTier?: string): number {
+  const tier = String(serviceTier ?? '')
+    .trim()
+    .toLowerCase();
+  if (tier !== 'priority' && tier !== 'fast') return 1;
+
+  const normalizedModel = String(modelName ?? '')
+    .trim()
+    .toLowerCase();
+  // OpenAI Priority pricing currently publishes tier multipliers for these
+  // model families. Keep this as a compatibility layer until model prices can
+  // be represented per tier, such as standard, priority, flex, and batch.
+  if (isModelFamily(normalizedModel, 'gpt-5.5')) return 2.5;
+  if (isModelFamily(normalizedModel, 'gpt-5.4-mini')) return 2;
+  if (isModelFamily(normalizedModel, 'gpt-5.4')) return 2;
+  if (isModelFamily(normalizedModel, 'gpt-5.3-codex')) return 2;
+  return 1;
+}
+
 export const compatibleCachedTokens = (
   cachedTokens: unknown,
   cacheTokens: unknown,
@@ -556,12 +578,18 @@ export function extractTotalTokens(detail: unknown): number {
 }
 
 export function calculateCost(
-  detail: Pick<UsageDetail, 'tokens' | '__modelName' | '__resolvedModel'>,
+  detail: Pick<
+    UsageDetail,
+    'tokens' | '__modelName' | '__resolvedModel' | 'service_tier' | 'serviceTier'
+  >,
   modelPrices: Record<string, ModelPrice>
 ): number {
   const resolvedModel = detail.__resolvedModel || '';
   const requestedModel = detail.__modelName || '';
-  const price = modelPrices[resolvedModel] || modelPrices[requestedModel];
+  const resolvedPrice = resolvedModel ? modelPrices[resolvedModel] : undefined;
+  const requestedPrice = requestedModel ? modelPrices[requestedModel] : undefined;
+  const price = resolvedPrice || requestedPrice;
+  const pricedModel = resolvedPrice ? resolvedModel : requestedPrice ? requestedModel : '';
   if (!price) return 0;
 
   const inputTokens = Math.max(toFiniteNumber(detail.tokens.input_tokens), 0);
@@ -574,24 +602,28 @@ export function calculateCost(
   const cacheCreationTokens = Math.max(toFiniteNumber(detail.tokens.cache_creation_tokens), 0);
   const promptPrice = Number(price.prompt) || 0;
   const completionPrice = Number(price.completion) || 0;
+  let standardCost = 0;
   if (cacheReadTokens > 0 || cacheCreationTokens > 0) {
     const cacheReadPrice = Number(price.cacheRead) || Number(price.cache) || 0;
     const cacheCreationPrice = Number(price.cacheCreation) || promptPrice;
     const promptTokens = Math.max(inputTokens - cachedTokens, 0);
-    const total =
+    standardCost =
       (promptTokens / TOKENS_PER_PRICE_UNIT) * promptPrice +
       (completionTokens / TOKENS_PER_PRICE_UNIT) * completionPrice +
       (cachedTokens / TOKENS_PER_PRICE_UNIT) * (Number(price.cache) || 0) +
       (cacheReadTokens / TOKENS_PER_PRICE_UNIT) * cacheReadPrice +
       (cacheCreationTokens / TOKENS_PER_PRICE_UNIT) * cacheCreationPrice;
-    return Number.isFinite(total) && total > 0 ? total : 0;
+  } else {
+    const promptTokens = Math.max(inputTokens - cachedTokens, 0);
+    const promptCost = (promptTokens / TOKENS_PER_PRICE_UNIT) * promptPrice;
+    const completionCost = (completionTokens / TOKENS_PER_PRICE_UNIT) * completionPrice;
+    const cachedCost = (cachedTokens / TOKENS_PER_PRICE_UNIT) * (Number(price.cache) || 0);
+    standardCost = promptCost + cachedCost + completionCost;
   }
 
-  const promptTokens = Math.max(inputTokens - cachedTokens, 0);
-  const promptCost = (promptTokens / TOKENS_PER_PRICE_UNIT) * promptPrice;
-  const completionCost = (completionTokens / TOKENS_PER_PRICE_UNIT) * completionPrice;
-  const cachedCost = (cachedTokens / TOKENS_PER_PRICE_UNIT) * (Number(price.cache) || 0);
-  const total = promptCost + cachedCost + completionCost;
+  const serviceTier = detail.service_tier ?? detail.serviceTier;
+  const multiplier = getServiceTierMultiplier(pricedModel, serviceTier);
+  const total = standardCost * multiplier;
   return Number.isFinite(total) && total > 0 ? total : 0;
 }
 

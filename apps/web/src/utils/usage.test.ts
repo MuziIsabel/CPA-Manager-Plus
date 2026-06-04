@@ -7,6 +7,7 @@ import {
   collectUsageDetailsWithEndpoint,
   compatibleCachedTokens,
   extractTotalTokens,
+  getServiceTierMultiplier,
   normalizeUsageSourceId,
 } from './usage';
 import { maskSensitiveText } from './format';
@@ -313,6 +314,20 @@ describe('calculateCost model price preference', () => {
     expect(cost).toBeCloseTo(50);
   });
 
+  it('applies the tier multiplier to the requested price fallback', () => {
+    const cost = calculateCost(
+      {
+        tokens: { input_tokens: 1_000_000, output_tokens: 0 },
+        __modelName: 'gpt-5.4',
+        __resolvedModel: 'unknown-upstream',
+        service_tier: 'priority',
+      },
+      prices
+    );
+
+    expect(cost).toBeCloseTo(100);
+  });
+
   it('charges cached input tokens only at the cache price', () => {
     const cost = calculateCost(
       {
@@ -353,5 +368,89 @@ describe('calculateCost model price preference', () => {
     );
 
     expect(cost).toBeCloseTo(2.3);
+  });
+
+  it('applies gpt-5.4 priority service tier multiplier', () => {
+    const cost = calculateCost(
+      {
+        tokens: { input_tokens: 1_000_000 },
+        __modelName: 'gpt-5.4',
+        service_tier: 'priority',
+      },
+      {
+        'gpt-5.4': { prompt: 2.5, completion: 5, cache: 1 },
+      }
+    );
+
+    expect(cost).toBeCloseTo(5);
+  });
+
+  it('applies gpt-5.5 priority service tier multiplier', () => {
+    const cost = calculateCost(
+      {
+        tokens: { input_tokens: 1_000_000 },
+        __modelName: 'gpt-5.5',
+        serviceTier: 'priority',
+      },
+      {
+        'gpt-5.5': { prompt: 2, completion: 4, cache: 1 },
+      }
+    );
+
+    expect(cost).toBeCloseTo(5);
+  });
+
+  it('keeps default and missing service tier at standard cost', () => {
+    const modelPrices = {
+      'gpt-5.4': { prompt: 2.5, completion: 5, cache: 1 },
+    };
+
+    expect(
+      calculateCost(
+        {
+          tokens: { input_tokens: 1_000_000 },
+          __modelName: 'gpt-5.4',
+          service_tier: 'default',
+        },
+        modelPrices
+      )
+    ).toBeCloseTo(2.5);
+    expect(
+      calculateCost(
+        {
+          tokens: { input_tokens: 1_000_000 },
+          __modelName: 'gpt-5.4',
+        },
+        modelPrices
+      )
+    ).toBeCloseTo(2.5);
+  });
+
+  it('does not guess priority multiplier for unknown models', () => {
+    const cost = calculateCost(
+      {
+        tokens: { input_tokens: 1_000_000 },
+        __modelName: 'unknown-model',
+        service_tier: 'priority',
+      },
+      {
+        'unknown-model': { prompt: 2.5, completion: 5, cache: 1 },
+      }
+    );
+
+    expect(cost).toBeCloseTo(2.5);
+  });
+});
+
+describe('getServiceTierMultiplier', () => {
+  it('matches backend priority tier rules', () => {
+    expect(getServiceTierMultiplier('gpt-5.4', 'default')).toBe(1);
+    expect(getServiceTierMultiplier('gpt-5.4', 'priority')).toBe(2);
+    expect(getServiceTierMultiplier('gpt-5.4', 'fast')).toBe(2);
+    expect(getServiceTierMultiplier('gpt-5.4-mini', 'priority')).toBe(2);
+    expect(getServiceTierMultiplier('gpt-5.5', 'priority')).toBe(2.5);
+    expect(getServiceTierMultiplier('gpt-5.3-codex', 'priority')).toBe(2);
+    expect(getServiceTierMultiplier('gpt-5.4', 'unknown')).toBe(1);
+    expect(getServiceTierMultiplier('unknown-model', 'priority')).toBe(1);
   });
 });
