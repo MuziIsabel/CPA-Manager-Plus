@@ -23,6 +23,10 @@ import {
   type UsageAnomalyAnalysis,
   type UsageTimelinePoint,
 } from './usageAnalyticsModel';
+import {
+  readUsageAnalyticsUiState,
+  writeUsageAnalyticsUiState,
+} from './usageAnalyticsUiState';
 
 const USAGE_SEARCH_DEBOUNCE_MS = 350;
 
@@ -39,7 +43,7 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 
 export function useUsageAnalytics() {
   const [filters, setFiltersState] = useState<UsageAnalyticsFiltersState>(
-    USAGE_ANALYTICS_DEFAULT_FILTERS
+    () => readUsageAnalyticsUiState().filters
   );
   const [activeTabState, setActiveTabState] = useState<UsageAnalyticsTab>('overview');
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -194,20 +198,29 @@ export function useUsageAnalytics() {
     ]
   );
   const setFilters = useCallback((patch: Partial<UsageAnalyticsFiltersState>) => {
-    setFiltersState((current) => ({ ...current, ...patch }));
+    setFiltersState((current) => {
+      const next = { ...current, ...patch };
+      writeUsageAnalyticsUiState({ filters: next });
+      return next;
+    });
     setSelectedBucketMs(null);
   }, []);
 
   const resetFilters = useCallback(() => {
     setFiltersState(USAGE_ANALYTICS_DEFAULT_FILTERS);
+    writeUsageAnalyticsUiState({ filters: USAGE_ANALYTICS_DEFAULT_FILTERS });
     setSelectedBucketMs(null);
   }, []);
 
   const clearFilter = useCallback((key: UsageSelectedFilterKey) => {
-    setFiltersState((current) => ({
-      ...current,
-      [key]: 'all',
-    }));
+    setFiltersState((current) => {
+      const next = {
+        ...current,
+        [key]: 'all',
+      };
+      writeUsageAnalyticsUiState({ filters: next });
+      return next;
+    });
     setSelectedBucketMs(null);
   }, []);
 
