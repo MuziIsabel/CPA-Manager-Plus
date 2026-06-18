@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type {
@@ -2249,17 +2249,21 @@ function UsageAnalyticsPageInner() {
   const [showAllModels, setShowAllModels] = useState(false);
   const [credentialWarningsForSelectionOnly, setCredentialWarningsForSelectionOnly] =
     useState(false);
-  const [customStartInput, setCustomStartInput] = useState(() =>
-    formatDateTimeLocalValue(
-      new Date(usage.filters.customRange?.startMs ?? Date.now() - 24 * 60 * 60 * 1000)
-    )
-  );
-  const [customEndInput, setCustomEndInput] = useState(() =>
-    formatDateTimeLocalValue(new Date(usage.filters.customRange?.endMs ?? Date.now()))
-  );
+  const [customRangeFallbackEndMs] = useState(() => Date.now());
+  const customStartInputRef = useRef<HTMLInputElement | null>(null);
+  const customEndInputRef = useRef<HTMLInputElement | null>(null);
   const [stableOptionCache, setStableOptionCache] = useState<StableUsageOptionCache>(() =>
     emptyStableOptionCache()
   );
+  const customStartInputValue = formatDateTimeLocalValue(
+    new Date(usage.filters.customRange?.startMs ?? customRangeFallbackEndMs - 24 * 60 * 60 * 1000)
+  );
+  const customEndInputValue = formatDateTimeLocalValue(
+    new Date(usage.filters.customRange?.endMs ?? customRangeFallbackEndMs)
+  );
+  const customRangeInputKey = `${usage.filters.customRange?.startMs ?? 'default'}:${
+    usage.filters.customRange?.endMs ?? 'default'
+  }`;
   const allModelOptionLabel = t('monitoring.filter_all_models');
   const allApiKeyOptionLabel = t('monitoring.filter_all_api_keys');
   const allProviderOptionLabel = t('monitoring.filter_all_providers');
@@ -2332,6 +2336,23 @@ function UsageAnalyticsPageInner() {
           }
         )
       : `/monitoring?api_key_hash=${encodeURIComponent(apiKeyHash)}`;
+  const buildCredentialMonitoringUrl = (
+    row: Pick<UsageRankRow, 'authFile' | 'projectId'> | null | undefined,
+    status?: UsageAnalyticsStatus
+  ) =>
+    usage.bounds
+      ? buildMonitoringDetailUrl(
+          { bucketMs: usage.bounds.fromMs, bucketEndMs: usage.bounds.toMs },
+          {
+            ...usage.filters,
+            authFile: row?.authFile || usage.filters.authFile,
+            projectId: row?.projectId || undefined,
+            status: status ?? usage.filters.status,
+          }
+        )
+      : `/monitoring?auth_file=${encodeURIComponent(row?.authFile || '')}&project_id=${encodeURIComponent(
+          row?.projectId || ''
+        )}`;
   const openApiKeyCombinationHeatmap = () => {
     const apiKeyHash = usage.selectedApiKey?.apiKeyHash || usage.selectedApiKey?.id || '';
     if (apiKeyHash) {
@@ -2545,8 +2566,10 @@ function UsageAnalyticsPageInner() {
   };
 
   const applyCustomRange = () => {
-    const startMs = parseDateTimeLocalValue(customStartInput);
-    const endMs = parseDateTimeLocalValue(customEndInput);
+    const startMs = parseDateTimeLocalValue(
+      customStartInputRef.current?.value ?? customStartInputValue
+    );
+    const endMs = parseDateTimeLocalValue(customEndInputRef.current?.value ?? customEndInputValue);
     if (startMs === null || endMs === null || startMs >= endMs) return;
     updateFilters({
       timeRange: 'custom',
@@ -2707,15 +2730,17 @@ function UsageAnalyticsPageInner() {
           {usage.filters.timeRange === 'custom' ? (
             <div className={styles.customRangeRow}>
               <input
+                key={`start-${customRangeInputKey}`}
+                ref={customStartInputRef}
                 type="datetime-local"
-                value={customStartInput}
-                onChange={(event) => setCustomStartInput(event.target.value)}
+                defaultValue={customStartInputValue}
                 aria-label={t('usage_analytics.custom_start')}
               />
               <input
+                key={`end-${customRangeInputKey}`}
+                ref={customEndInputRef}
                 type="datetime-local"
-                value={customEndInput}
-                onChange={(event) => setCustomEndInput(event.target.value)}
+                defaultValue={customEndInputValue}
                 aria-label={t('usage_analytics.custom_end')}
               />
               <Button variant="secondary" size="sm" onClick={applyCustomRange}>
@@ -3054,7 +3079,7 @@ function UsageAnalyticsPageInner() {
                       usage.bounds
                         ? buildMonitoringDetailUrl(
                             { bucketMs: usage.bounds.fromMs, bucketEndMs: usage.bounds.toMs },
-                            { model }
+                            { ...usage.filters, model }
                           )
                         : `/monitoring?model=${encodeURIComponent(model)}`
                     );
@@ -3225,13 +3250,7 @@ function UsageAnalyticsPageInner() {
                     variant="secondary"
                     size="sm"
                     onClick={() =>
-                      navigate(
-                        `/monitoring?auth_file=${encodeURIComponent(
-                          usage.selectedCredential?.authFile || ''
-                        )}&project_id=${encodeURIComponent(
-                          usage.selectedCredential?.projectId || ''
-                        )}`
-                      )
+                      navigate(buildCredentialMonitoringUrl(usage.selectedCredential))
                     }
                   >
                     <IconExternalLink size={14} />
@@ -3272,9 +3291,12 @@ function UsageAnalyticsPageInner() {
                 type="credential"
                 onOpen={(row) =>
                   navigate(
-                    `/monitoring?auth_file=${encodeURIComponent(
-                      row.row.authFile || ''
-                    )}&project_id=${encodeURIComponent(row.row.projectId || '')}`
+                    buildCredentialMonitoringUrl(
+                      row.row,
+                      row.reasonKey === 'usage_analytics.anomaly_reason_error_rate'
+                        ? 'failed'
+                        : usage.filters.status
+                    )
                   )
                 }
               />

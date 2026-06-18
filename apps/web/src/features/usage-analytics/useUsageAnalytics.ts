@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useMonitoringAnalytics } from '@/features/monitoring/hooks/useMonitoringAnalytics';
 import {
   adaptUsageAnalyticsData,
@@ -35,7 +36,13 @@ import {
   type UsageHeatmapScaleMode,
   type UsageTimelinePoint,
 } from './usageAnalyticsModel';
-import { readUsageAnalyticsUiState, writeUsageAnalyticsUiState } from './usageAnalyticsUiState';
+import {
+  buildUsageAnalyticsSearchParams,
+  buildUsageAnalyticsUiStateFromSearchParams,
+  readUsageAnalyticsUiState,
+  writeUsageAnalyticsUiState,
+  type UsageAnalyticsUiState,
+} from './usageAnalyticsUiState';
 
 const USAGE_SEARCH_DEBOUNCE_MS = 350;
 const USAGE_HEATMAP_ALL_DATES_KEY = 'all';
@@ -57,10 +64,19 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 export function useUsageAnalytics() {
-  const [filters, setFiltersState] = useState<UsageAnalyticsFiltersState>(
-    () => readUsageAnalyticsUiState().filters
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [initialUiState] = useState<UsageAnalyticsUiState>(() =>
+    buildUsageAnalyticsUiStateFromSearchParams(
+      searchParams,
+      readUsageAnalyticsUiState()
+    )
   );
-  const [activeTabState, setActiveTabState] = useState<UsageAnalyticsTab>('overview');
+  const [filters, setFiltersState] = useState<UsageAnalyticsFiltersState>(
+    () => initialUiState.filters
+  );
+  const [activeTabState, setActiveTabState] = useState<UsageAnalyticsTab>(
+    () => initialUiState.activeTab
+  );
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [selectedBucketMs, setSelectedBucketMs] = useState<number | null>(null);
   const [selectedModelId, setSelectedModelId] = useState('');
@@ -78,6 +94,7 @@ export function useUsageAnalytics() {
   const browserTimeZone = useMemo(() => getBrowserTimeZone(), []);
   const setActiveTab = useCallback((tab: UsageAnalyticsTab) => {
     setActiveTabState(tab);
+    writeUsageAnalyticsUiState({ activeTab: tab });
   }, []);
   const debouncedSearchQuery = useDebouncedValue(
     filters.searchQuery.trim(),
@@ -108,6 +125,15 @@ export function useUsageAnalytics() {
     [filters, nowMs]
   );
   const analyticsFilters = useMemo(() => buildUsageAnalyticsFilters(filters), [filters]);
+
+  useEffect(() => {
+    const nextState = { activeTab: activeTabState, filters };
+    writeUsageAnalyticsUiState(nextState);
+    const nextParams = buildUsageAnalyticsSearchParams(nextState);
+    if (nextParams.toString() !== searchParams.toString()) {
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [activeTabState, filters, searchParams, setSearchParams]);
   const drilldownPreview = useMemo(() => {
     if (selectedBucketMs === null) return null;
     return {

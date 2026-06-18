@@ -999,10 +999,15 @@ describe('usage anomaly drilldown', () => {
         apiKeyHash: ' ABCDEF1234 ',
         provider: 'OpenAI',
         authFile: 'codex-auth.json',
+        projectId: 'project-1',
+        requestType: 'codex',
         status: 'failed',
+        searchQuery: ' req-42 ',
+        minLatencyMs: '10000',
+        cacheStatus: 'hit',
       })
     ).toBe(
-      `/monitoring?from_ms=${NOW_MS}&to_ms=${NOW_MS + HOUR_MS}&model=gpt-4o&api_key_hash=abcdef1234&provider=openai&auth_file=codex-auth.json&status=failed`
+      `/monitoring?from_ms=${NOW_MS}&to_ms=${NOW_MS + HOUR_MS}&model=gpt-4o&api_key_hash=abcdef1234&provider=openai&auth_file=codex-auth.json&project_id=project-1&request_type=codex&status=failed&search=req-42&min_latency_ms=10000&cache_status=hit`
     );
   });
 });

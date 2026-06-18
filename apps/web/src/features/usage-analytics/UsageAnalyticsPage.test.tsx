@@ -571,11 +571,24 @@ describe('UsageAnalyticsPage', () => {
   });
 
   it('navigates to request monitoring details for a selected anomaly bucket', () => {
+    mocks.usageState = createUsageState({
+      filters: {
+        ...USAGE_ANALYTICS_DEFAULT_FILTERS,
+        model: 'gpt-4o',
+        apiKeyHash: 'ABCDEF1234567890',
+        provider: 'OpenAI',
+        authFile: 'auth.json',
+        status: 'failed',
+        searchQuery: 'req-42',
+        minLatencyMs: '10000',
+        cacheStatus: 'hit',
+      },
+    });
     const renderer = renderPage();
     clickHostButton(findHostButtonByText(renderer, 'usage_analytics.view_monitoring_details'));
 
     expect(mocks.navigate).toHaveBeenCalledWith(
-      '/monitoring?from_ms=1780000000000&to_ms=1780003600000'
+      '/monitoring?from_ms=1780000000000&to_ms=1780003600000&model=gpt-4o&api_key_hash=abcdef1234567890&provider=openai&auth_file=auth.json&status=failed&search=req-42&min_latency_ms=10000&cache_status=hit'
     );
   });
 
@@ -704,6 +717,15 @@ describe('UsageAnalyticsPage', () => {
   it('renders the models tab with unit-economics columns and no insights panel', () => {
     const usageState = createUsageState({
       activeTab: 'models',
+      filters: {
+        ...USAGE_ANALYTICS_DEFAULT_FILTERS,
+        provider: 'OpenAI',
+        authFile: 'auth.json',
+        status: 'success',
+        searchQuery: 'req-42',
+        minLatencyMs: '10000',
+        cacheStatus: 'hit',
+      },
       insights: [
         {
           id: 'model-cost-share',
@@ -743,6 +765,10 @@ describe('UsageAnalyticsPage', () => {
     ).toBe(true);
     clickHostButton(findHostButtonByText(renderer, 'usage_analytics.trend_metric_totalTokens'));
     expect(usageState.setTrendMetric).toHaveBeenCalledWith('totalTokens');
+    clickHostButton(findHostButtonByText(renderer, 'usage_analytics.view_request_details'));
+    expect(mocks.navigate).toHaveBeenCalledWith(
+      '/monitoring?from_ms=1780000000000&to_ms=1780003600000&model=gpt-4o&provider=openai&auth_file=auth.json&status=success&search=req-42&min_latency_ms=10000&cache_status=hit'
+    );
     // Only one model row, so the show-all toggle stays hidden.
     expect(text).not.toContain('usage_analytics.rank_show_all');
   });
@@ -762,6 +788,12 @@ describe('UsageAnalyticsPage', () => {
 
     mocks.usageState = createUsageState({
       activeTab: 'credentials',
+      filters: {
+        ...USAGE_ANALYTICS_DEFAULT_FILTERS,
+        searchQuery: 'req-42',
+        minLatencyMs: '10000',
+        cacheStatus: 'miss',
+      },
       credentialRows,
       allCredentialRows: credentialRows,
       selectedCredential: credentialRows[0],
@@ -792,6 +824,10 @@ describe('UsageAnalyticsPage', () => {
     expect(text).toContain('project-1');
     expect(text).toContain('usage_analytics.credential_last_seen');
     expect(text).not.toContain('usage_analytics.credential_identity_source_hash');
+    clickHostButton(findHostButtonByText(renderer, 'usage_analytics.view_request_details'));
+    expect(mocks.navigate).toHaveBeenCalledWith(
+      '/monitoring?from_ms=1780000000000&to_ms=1780003600000&auth_file=auth.json&project_id=project-1&search=req-42&min_latency_ms=10000&cache_status=miss'
+    );
   });
 
   it('renders the heatmap tab as a focused time-window workspace', () => {

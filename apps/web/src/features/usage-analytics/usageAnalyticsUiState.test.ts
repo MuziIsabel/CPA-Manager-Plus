@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { USAGE_ANALYTICS_DEFAULT_FILTERS } from './usageAnalyticsModel';
 import {
   USAGE_ANALYTICS_UI_STATE_STORAGE_KEY,
+  buildUsageAnalyticsSearchParams,
+  buildUsageAnalyticsUiStateFromSearchParams,
   getDefaultUsageAnalyticsUiState,
   normalizeUsageAnalyticsFilters,
   normalizeUsageAnalyticsUiState,
@@ -52,6 +54,7 @@ describe('usageAnalyticsUiState', () => {
 
   it('uses 24h defaults when storage is empty', () => {
     expect(getDefaultUsageAnalyticsUiState()).toEqual({
+      activeTab: 'overview',
       filters: USAGE_ANALYTICS_DEFAULT_FILTERS,
     });
     expect(readUsageAnalyticsUiState()).toEqual(getDefaultUsageAnalyticsUiState());
@@ -112,6 +115,7 @@ describe('usageAnalyticsUiState', () => {
         },
       })
     ).toEqual({
+      activeTab: 'overview',
       filters: {
         ...USAGE_ANALYTICS_DEFAULT_FILTERS,
         model: 'all',
@@ -130,6 +134,7 @@ describe('usageAnalyticsUiState', () => {
     });
 
     expect(JSON.parse(storage.getItem(USAGE_ANALYTICS_UI_STATE_STORAGE_KEY) ?? '{}')).toEqual({
+      activeTab: 'overview',
       filters: {
         ...USAGE_ANALYTICS_DEFAULT_FILTERS,
         timeRange: '7d',
@@ -138,6 +143,7 @@ describe('usageAnalyticsUiState', () => {
       },
     });
     expect(readUsageAnalyticsUiState()).toEqual({
+      activeTab: 'overview',
       filters: {
         ...USAGE_ANALYTICS_DEFAULT_FILTERS,
         timeRange: '7d',
@@ -150,5 +156,68 @@ describe('usageAnalyticsUiState', () => {
   it('returns defaults when stored payload is invalid JSON', () => {
     storage.setItem(USAGE_ANALYTICS_UI_STATE_STORAGE_KEY, '{not json');
     expect(readUsageAnalyticsUiState()).toEqual(getDefaultUsageAnalyticsUiState());
+  });
+
+  it('builds ui state from usage analytics query parameters', () => {
+    const state = buildUsageAnalyticsUiStateFromSearchParams(
+      new URLSearchParams(
+        'tab=apiKeys&time_range=custom&from_ms=1000&to_ms=2000&granularity=day&model=gpt-4o&api_key_hash=ABC&provider=OpenAI&auth_file=auth.json&status=failed&search=req-42&min_latency_ms=10000&cache_status=hit&api_key_keyword=key'
+      )
+    );
+
+    expect(state).toEqual({
+      activeTab: 'apiKeys',
+      filters: {
+        ...USAGE_ANALYTICS_DEFAULT_FILTERS,
+        timeRange: 'custom',
+        customRange: { startMs: 1_000, endMs: 2_000 },
+        granularity: 'day',
+        model: 'gpt-4o',
+        apiKeyHash: 'ABC',
+        provider: 'OpenAI',
+        authFile: 'auth.json',
+        status: 'failed',
+        searchQuery: 'req-42',
+        minLatencyMs: '10000',
+        cacheStatus: 'hit',
+        apiKeyKeyword: 'key',
+      },
+    });
+  });
+
+  it('serializes non-default usage analytics state into query parameters', () => {
+    const params = buildUsageAnalyticsSearchParams({
+      activeTab: 'apiKeys',
+      filters: {
+        ...USAGE_ANALYTICS_DEFAULT_FILTERS,
+        timeRange: 'custom',
+        customRange: { startMs: 1_000, endMs: 2_000 },
+        granularity: 'day',
+        model: 'gpt-4o',
+        apiKeyHash: 'ABC',
+        provider: 'OpenAI',
+        authFile: 'auth.json',
+        status: 'failed',
+        searchQuery: 'req-42',
+        minLatencyMs: '10000',
+        cacheStatus: 'hit',
+        apiKeyKeyword: 'key',
+      },
+    });
+
+    expect(params.get('tab')).toBe('apiKeys');
+    expect(params.get('time_range')).toBe('custom');
+    expect(params.get('from_ms')).toBe('1000');
+    expect(params.get('to_ms')).toBe('2000');
+    expect(params.get('granularity')).toBe('day');
+    expect(params.get('model')).toBe('gpt-4o');
+    expect(params.get('api_key_hash')).toBe('ABC');
+    expect(params.get('provider')).toBe('OpenAI');
+    expect(params.get('auth_file')).toBe('auth.json');
+    expect(params.get('status')).toBe('failed');
+    expect(params.get('search')).toBe('req-42');
+    expect(params.get('min_latency_ms')).toBe('10000');
+    expect(params.get('cache_status')).toBe('hit');
+    expect(params.get('api_key_keyword')).toBe('key');
   });
 });

@@ -2262,8 +2262,21 @@ export const buildUsageAnomalyCauseKeys = (
 export const buildMonitoringDetailUrl = (
   point: UsageTimelinePoint | Pick<UsageServerAnomaly, 'bucketMs' | 'bucketEndMs'>,
   filters: Partial<
-    Pick<UsageAnalyticsFiltersState, 'model' | 'apiKeyHash' | 'provider' | 'authFile' | 'status'>
-  >
+    Pick<
+      UsageAnalyticsFiltersState,
+      | 'model'
+      | 'apiKeyHash'
+      | 'provider'
+      | 'authFile'
+      | 'status'
+      | 'searchQuery'
+      | 'minLatencyMs'
+      | 'cacheStatus'
+    >
+  > & {
+    projectId?: string;
+    requestType?: string;
+  }
 ) => {
   const params = new URLSearchParams();
   params.set('from_ms', String(point.bucketMs));
@@ -2272,6 +2285,9 @@ export const buildMonitoringDetailUrl = (
   const apiKeyHash = filters.apiKeyHash ?? 'all';
   const provider = filters.provider ?? 'all';
   const authFile = filters.authFile ?? 'all';
+  const searchQuery = filters.searchQuery ?? '';
+  const minLatencyMs = filters.minLatencyMs ?? 'all';
+  const cacheStatus = filters.cacheStatus ?? 'all';
   if (isActiveSelectValue(model)) {
     params.set('model', model.trim());
   }
@@ -2284,8 +2300,23 @@ export const buildMonitoringDetailUrl = (
   if (isActiveSelectValue(authFile)) {
     params.set('auth_file', authFile.trim());
   }
+  if (isActiveSelectValue(filters.projectId)) {
+    params.set('project_id', filters.projectId!.trim());
+  }
+  if (isActiveSelectValue(filters.requestType)) {
+    params.set('request_type', filters.requestType!.trim());
+  }
   if (filters.status && filters.status !== 'all') {
     params.set('status', filters.status);
+  }
+  if (searchQuery.trim()) {
+    params.set('search', searchQuery.trim());
+  }
+  if (minLatencyMs !== 'all') {
+    params.set('min_latency_ms', minLatencyMs);
+  }
+  if (cacheStatus !== 'all') {
+    params.set('cache_status', cacheStatus);
   }
   return `/monitoring?${params.toString()}`;
 };
